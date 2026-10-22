@@ -2,6 +2,28 @@
 const $ = id => document.getElementById(id);
 let files = {}, current = '', commands = [], mapping = {}, sw = 0, busy = false, last = null;
 const storageKey = 'nexys-lab-project-v1';
+const photoKey = 'nexys-lab-board-photo-v1';
+function setBoardPhoto(source) {
+  $('pcb-art').src = source || 'board.svg';
+  $('physical-board').classList.toggle('photo-board',Boolean(source));
+  $('physical-board').classList.toggle('manufacturer-photo',source === 'nexys-a7-photo.jpg');
+  $('photo-status').textContent = source ? 'Digilent board photograph · controls and display use live VHDL outputs.' : 'Vector view. Choose Board photo to restore the manufacturer photograph.';
+}
+$('choose-photo').onclick = () => { localStorage.removeItem(photoKey);setBoardPhoto('nexys-a7-photo.jpg'); };
+$('upload-photo').onclick = () => $('photo-upload').click();
+$('default-art').onclick = () => { localStorage.setItem(photoKey,'vector'); setBoardPhoto(null); };
+$('photo-upload').onchange = async event => {
+  const file=event.target.files[0]; if(!file) return;
+  try {
+    if(!['image/png','image/jpeg','image/webp'].includes(file.type) || file.size>3000000) throw Error('Choose a PNG, JPG or WebP image smaller than 3 MB.');
+    const source=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(Error('Could not read photo'));reader.readAsDataURL(file);});
+    const photo=new Image(); photo.src=source; await photo.decode();
+    if(Math.abs(photo.width/photo.height-600/550)>.03) throw Error('Use the front-facing reference photo at 600 × 550 (or the same proportions), without a desk or extra margins.');
+    setBoardPhoto(source);
+    try {localStorage.setItem(photoKey,source);}catch{toast('Photo loaded for this session. Browser storage is full.');}
+  }catch(error){toast(error.message);}
+  event.target.value='';
+};
 let liveToken = null, paused = false, liveGeneration = 0, simNs = 0, wallStart = 0, liveTimer = null;
 let timeScale = 1, pausedAt = 0, pausedWall = 0;
 const holds = new Map();
@@ -45,7 +67,7 @@ async function startLive() {
         if (generation !== liveGeneration) return;
         simNs = frame.sim_ns; last = frame;
         for (const [name,press] of presses) if (holds.get(name) === press) { press.remainingNs-=quantum; if(press.remainingNs<=0) holds.delete(name); }
-        if (frame.inputs?.buttons.includes('btnU')) $('input-status').textContent = 'GO delivered to VHDL · requested switch value '+frame.inputs.sw+'. Waiting for clocked movement.';
+        if (frame.inputs?.buttons.includes('btnU')) $('input-status').textContent = 'GO delivered to VHDL · requested switch value '+frame.inputs.sw+'. Watch the live display and door output.';
         renderBoard(frame); renderWaves(frame.wave);
         const wall = activeWallMs()/1000, sim = simNs/1e9, board = frame.board_ns/1e9;
         $('sim-time').textContent = sim.toFixed(6) + ' s'; $('wall-time').textContent = wall.toFixed(2)+' s';
@@ -197,6 +219,7 @@ document.querySelectorAll('[data-button]').forEach(button => button.onclick = ()
 window.addEventListener('pagehide',()=>{if(liveToken)fetch('/api/live/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session:liveToken}),keepalive:true}).catch(()=>{});});
 document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run(); } });
 async function init() {
+  try {const savedPhoto=localStorage.getItem(photoKey);setBoardPhoto(savedPhoto==='vector'?null:(savedPhoto||'nexys-a7-photo.jpg'));}catch{setBoardPhoto('nexys-a7-photo.jpg');}
   try { const saved = JSON.parse(localStorage.getItem(storageKey)); if (saved?.files && Object.keys(saved.files).length) { files = saved.files; mapping = saved.mapping || {}; $('top').value = saved.top || 'elevator_top'; $('mode').value = saved.mode || 'board'; $('timing').value = saved.timing === 'interactive' ? 'interactive' : 'original'; openFile(saved.current || Object.keys(files)[0]); modeChanged(false); } else await loadExample(false); }
   catch { await loadExample(false); }
   timingDescription();

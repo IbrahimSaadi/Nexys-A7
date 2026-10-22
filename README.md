@@ -27,7 +27,7 @@ The clock is **100 MHz**, exactly **10 ns** per period in HDL time. **Original**
 
 If GO appears to do nothing in Original mode, check the speed: at 0.006× a single floor takes roughly 170 wall seconds. Select Interactive timing explicitly, Run, set SW0/SW1, then GO to reach floor 3 in about three wall seconds. Both modes use the actual VHDL outputs to drive the display and door.
 
-The new board is a vector representation following the supplied board layout, not an exact photograph. Switches, buttons, LEDs and eight multiplexed seven-segment digits are functional. Other connectors and chips are visual references: DDR, VGA, USB, Ethernet, Pmod peripherals and full FPGA silicon are not emulated.
+The default view uses the same Digilent product photograph as the user's reference, with slightly different outer margins at higher resolution. Live HTML controls and display sit over the original image. Board photo restores this view; Vector view selects the drawing; Your photo imports a local front-facing reference. Photo selection stays in browser storage. Switches, buttons, LEDs and eight multiplexed seven-segment digits are functional. Other connectors and chips are visual references: DDR, VGA, USB, Ethernet, Pmod peripherals and full FPGA silicon are not emulated.
 
 ## Editor and future projects
 
@@ -79,3 +79,5 @@ With Playwright installed as a development-only tool, `node scripts/check_intera
 The build script verifies pinned official GHDL and CPython downloads and includes their licenses and GHDL source. It produces the portable ZIP and SHA256 file under dist/. GitHub Actions builds on Windows, runs tests using the bundled Windows Python and GHDL, then publishes tagged v* releases only after tests pass.
 
 Hardware facts and the 24 checked elevator pin mappings are documented in [board-reference.md](docs/board-reference.md).
+
+The photograph source and attribution are recorded in [PHOTO-SOURCE.md](third_party/PHOTO-SOURCE.md). Its visible peripherals are not evidence of implemented peripheral models.

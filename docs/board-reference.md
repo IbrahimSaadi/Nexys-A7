@@ -8,7 +8,7 @@ Sources actually read during development:
 
 The [Digilent reference manual](https://digilent.com/reference/programmable-logic/nexys-a7/reference-manual) is the vendor's manual link, but its website was blocked by the onboarding network proxy. Specifications above were checked against the accessible official GitHub files, rather than claiming that the manual was read.
 
-The vector board art follows the user's supplied photographs: power/USB/Ethernet/VGA/audio across the upper edge, FPGA and memory in the center, buttons on the right, eight digits below, and switches along the lower edge. It is a representative drawing, not a dimensionally exact reproduction. Only mapped controls and outputs are functional; decorative connectors do not imply peripheral simulation.
+The default board background is the same manufacturer product photograph as the user's supplied reference (higher resolution with slightly different margins); see [photo source](../third_party/PHOTO-SOURCE.md). The optional vector art follows that layout: power/USB/Ethernet/VGA/audio across the upper edge, FPGA and memory in the center, buttons on the right, eight digits below, and switches along the lower edge. It is a representative drawing, not a dimensionally exact reproduction. Only mapped controls and outputs are functional; decorative connectors do not imply peripheral simulation.
 
 ## Supplied elevator constraints checked against official pin mappings
 
