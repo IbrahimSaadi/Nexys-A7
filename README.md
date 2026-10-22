@@ -10,18 +10,22 @@ Use the newly opened browser tab, not an old bookmark. The header shows the runn
 
 ## Continuous board mode
 
-1. Select **Interactive board**, top entity `elevator_top`, then press **Run** once.
+1. Select **Interactive board**, top entity `elevator_top`. Choose **Board timing**: Original preserves the hardware counters (slow); Interactive scales temporary elevator counters for a responsive preview. Original remains the default. Press **Run** once.
 2. Set SW3–SW0 to the destination (0–15). Click Up / GO.
 3. The simulation clock runs automatically. No Advance tick button is needed.
 4. Pause/Resume freezes and continues HDL time without restarting the circuit. Stop ends the session. Reset session starts a fresh circuit.
 
-The backend keeps one GHDL process and its state alive per session. It applies switch/button changes between 1 ms HDL intervals. A click generates at least 30 ms of HDL button input, enough for the design's original 20 ms debounce. Switch changes are delivered at the next interval. This interval-based I/O is not analog contact bounce or sub-cycle physical input timing.
+The backend keeps one GHDL process and its state alive per session. Original mode applies switch/button changes between 1 ms HDL intervals. A click generates at least 30 ms of board-time button input, enough for debounce in the selected timing profile. Queued presses are consumed only after delivery to the simulator, including presses made during an in-flight frame. The input status confirms delivery to VHDL, not acceptance by the FSM (which may ignore GO while moving). This interval-based I/O is not analog contact bounce or sub-cycle physical input timing.
 
 ### Clock and time accuracy
 
-The clock is **100 MHz**, exactly **10 ns** per period in HDL time. Board mode uses the original source constants: no DIVISOR, DEBOUNCE_CYCLES or SCAN_DIV overrides. A one-second divider therefore requires 100 million clock cycles, just as described by the source. The door timer and travel timing come from actual VHDL, not JavaScript logic.
+The clock is **100 MHz**, exactly **10 ns** per period in HDL time. **Original** mode uses the original source constants: no DIVISOR, DEBOUNCE_CYCLES or SCAN_DIV overrides. A one-second divider therefore requires 100 million clock cycles, just as described by the source. The door timer and travel timing come from actual VHDL, not JavaScript logic.
 
 **Exact HDL time is not a guarantee of real-time execution.** An event-driven CPU simulator can run much slower than a physical FPGA. The UI shows HDL time, elapsed wall time and the measured ratio. It never labels software lag as real-time speed or compensates by changing the design. On the onboarding machine a 1 ms elevator interval took roughly 170 ms of wall time; your Windows machine may differ. Button debounce, floor travel and door timers can therefore take longer in wall time. If simulation can outrun wall time, the frontend paces requests to at most 1×.
+
+**Interactive** timing is an explicit, optional elevator preview. It still compiles and executes the user's actual VHDL FSM, debounce and display using GHDL. Only disposable build copies scale three recognized timing constants by 10,000: `DIVISOR=10000`, `DEBOUNCE_CYCLES=200`, `SCAN_DIV=5`. The original editor/project files remain unchanged, and every override is listed in the terminal. Frontend pacing maps 100 microseconds of scaled HDL time to one board/wall second. Frames represent 50 ms of board time (5 microseconds of HDL time). A floor should take approximately one wall second when the computer can keep up. This is a scaled functional preview, not proof of original hardware timing. Unrecognized constant profiles are rejected; use Original mode or a custom testbench for other designs. Pause does not trigger catch-up bursts on resume.
+
+If GO appears to do nothing in Original mode, check the speed: at 0.006× a single floor takes roughly 170 wall seconds. Select Interactive timing explicitly, Run, set SW0/SW1, then GO to reach floor 3 in about three wall seconds. Both modes use the actual VHDL outputs to drive the display and door.
 
 The new board is a vector representation following the supplied board layout, not an exact photograph. Switches, buttons, LEDs and eight multiplexed seven-segment digits are functional. Other connectors and chips are visual references: DDR, VGA, USB, Ethernet, Pmod peripherals and full FPGA silicon are not emulated.
 
@@ -69,6 +73,8 @@ python3 scripts/build_windows.py
 ```
 
 Tests cover the supplied FSM assertions, legacy batch simulation, persistent state, exactly 1,000 cycles per 10 microseconds, original 20 ms debounce, multiplexed digits, another mapped design, failure handling, portable simulator detection and occupied ports. Binary runtimes do not enter Git.
+
+With Playwright installed as a development-only tool, `node scripts/check_interaction.cjs` checks real switch → GO → floor 03 interaction against an app already running on port 8011 (override with `NEXYS_LAB_URL`). It checks visible input feedback, approximately one floor per wall second, Pause/Resume and original-mode selection. The Windows release workflow runs this browser test using the actual portable backend before publishing.
 
 The build script verifies pinned official GHDL and CPython downloads and includes their licenses and GHDL source. It produces the portable ZIP and SHA256 file under dist/. GitHub Actions builds on Windows, runs tests using the bundled Windows Python and GHDL, then publishes tagged v* releases only after tests pass.
 

@@ -3,7 +3,14 @@ const $ = id => document.getElementById(id);
 let files = {}, current = '', commands = [], mapping = {}, sw = 0, busy = false, last = null;
 const storageKey = 'nexys-lab-project-v1';
 let liveToken = null, paused = false, liveGeneration = 0, simNs = 0, wallStart = 0, liveTimer = null;
+let timeScale = 1, pausedAt = 0, pausedWall = 0;
 const holds = new Map();
+const activeWallMs = () => (paused ? pausedAt : performance.now()) - wallStart - pausedWall;
+function timingDescription() {
+  const preview = $('timing').value === 'interactive';
+  $('timing-title').textContent = preview ? 'Interactive preview · timers scaled 1:10000' : 'Original timing · no constant overrides';
+  $('timing-note').textContent = preview ? 'Only temporary simulation copies use DIVISOR=10000, DEBOUNCE_CYCLES=200, SCAN_DIV=5. The board is paced toward one floor per wall second. Source files are unchanged; this is not original hardware-time execution.' : 'A floor needs 100 million clock cycles. Slow execution can take minutes per floor; actual HDL time and measured speed are shown. All original constants are preserved.';
+}
 async function liveRequest(action, body) {
   const response = await fetch('/api/live/' + action, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
   const data = await response.json(); if (!response.ok || data.error) throw Error(data.error || response.statusText); return data;
@@ -17,12 +24,13 @@ function stopLive() {
 async function startLive() {
   if (liveToken) { stopLive(); $('result').textContent = 'Stopped'; return; }
   if (busy) return;
-  busy = true; $('run').disabled = true; $('result').textContent = 'Compiling original VHDL…';
+  busy = true; $('run').disabled = true; $('result').textContent = 'Compiling VHDL…';
   const generation = ++liveGeneration;
   try {
-    const data = await liveRequest('start', {files, top:$('top').value, mapping});
+    const data = await liveRequest('start', {files, top:$('top').value, mapping, timing:$('timing').value});
     if (generation !== liveGeneration) { await liveRequest('stop',{session:data.session}); return; }
-    liveToken = data.session; mapping = data.mapping; simNs = 0; paused = false; holds.clear(); wallStart = performance.now();
+    liveToken = data.session; mapping = data.mapping; simNs = 0; paused = false; holds.clear(); wallStart = performance.now(); pausedWall = 0; timeScale = data.time_scale;
+    $('input-status').textContent = timeScale > 1 ? 'Running · interactive preview. Choose a floor and press GO.' : 'Running · original timing. A one-second HDL timer may take minutes.';
     $('pause').textContent = 'Ⅱ Pause'; $('run').textContent = '■ Stop simulation'; $('console').textContent = data.log;
     renderBoard(data); renderMapping(data); save();
     const pump = async () => {
@@ -30,18 +38,22 @@ async function startLive() {
       if (paused) { liveTimer = setTimeout(pump, 100); return; }
       try {
         const begin = performance.now();
-        const buttons = [...holds].filter(([,until])=>simNs < until).map(([name])=>name);
-        const frame = await liveRequest('advance', {session:liveToken, sw, buttons, ns:1000000});
+        const presses = [...holds].filter(([,press])=>press.remainingNs > 0);
+        const buttons = presses.map(([name])=>name);
+        const quantum = timeScale > 1 ? 5000 : 1000000;
+        const frame = await liveRequest('advance', {session:liveToken, sw, buttons, ns:quantum});
         if (generation !== liveGeneration) return;
         simNs = frame.sim_ns; last = frame;
+        for (const [name,press] of presses) if (holds.get(name) === press) { press.remainingNs-=quantum; if(press.remainingNs<=0) holds.delete(name); }
+        if (frame.inputs?.buttons.includes('btnU')) $('input-status').textContent = 'GO delivered to VHDL · requested switch value '+frame.inputs.sw+'. Waiting for clocked movement.';
         renderBoard(frame); renderWaves(frame.wave);
-        const wall = (performance.now()-wallStart)/1000, sim = simNs/1e9;
+        const wall = activeWallMs()/1000, sim = simNs/1e9, board = frame.board_ns/1e9;
         $('sim-time').textContent = sim.toFixed(6) + ' s'; $('wall-time').textContent = wall.toFixed(2)+' s';
-        $('sim-speed').textContent = (sim/Math.max(wall,0.001)).toFixed(4)+'× real time';
-        $('result').textContent = '● Running · original timing'; $('result').style.color = '#b5ec69';
-        document.querySelectorAll('[data-button]').forEach(b=>b.classList.toggle('pressed',simNs < (holds.get(b.dataset.button)||0)));
+        $('sim-speed').textContent = timeScale>1 ? board.toFixed(2)+' s · '+(board/Math.max(wall,.001)).toFixed(2)+'× preview' : (sim/Math.max(wall,0.001)).toFixed(4)+'× · 1 HDL s ≈ '+Math.round(wall/Math.max(sim,1e-9))+' wall s';
+        $('result').textContent = paused ? 'Paused' : timeScale>1 ? '● Running · scaled preview' : '● Running · original timing'; $('result').style.color = '#b5ec69';
+        document.querySelectorAll('[data-button]').forEach(b=>b.classList.toggle('pressed',holds.has(b.dataset.button)));
         // Never run ahead of wall time; slower simulation remains visibly slower.
-        const wait = Math.max(0, sim*1000-(performance.now()-wallStart), 16-(performance.now()-begin));
+        const wait = Math.max(0, board*1000-activeWallMs(), 16-(performance.now()-begin));
         liveTimer = setTimeout(pump,wait);
       } catch (error) { if (generation === liveGeneration) { stopLive(); $('console').textContent = error.message; $('result').textContent = 'Simulator stopped'; } }
     };
@@ -51,10 +63,10 @@ async function startLive() {
 }
 function toast(message) { $('toast').textContent = message; $('toast').classList.add('show'); setTimeout(() => $('toast').classList.remove('show'), 3000); }
 function save() {
-  try { localStorage.setItem(storageKey, JSON.stringify({files, current, top: $('top').value, mode: $('mode').value, mapping})); $('saved').textContent = '● Saved locally'; }
+  try { localStorage.setItem(storageKey, JSON.stringify({files, current, top: $('top').value, mode: $('mode').value, timing:$('timing').value, mapping})); $('saved').textContent = '● Saved locally'; }
   catch { $('saved').textContent = 'Storage full · export your project'; }
 }
-function resetHistory() { stopLive(); commands = []; last = null; simNs = 0; renderBoard({}); $('result').textContent = 'Session reset'; $('sim-time').textContent='0.000000 s'; $('wall-time').textContent='0.00 s'; $('sim-speed').textContent='—'; }
+function resetHistory() { stopLive(); commands = []; last = null; simNs = 0; renderBoard({}); $('result').textContent = 'Session reset'; $('input-status').textContent='Press Run, choose a floor, then press GO.'; $('sim-time').textContent='0.000000 s'; $('wall-time').textContent='0.00 s'; $('sim-speed').textContent='—'; }
 function fileList() {
   $('files').replaceChildren();
   for (const name of Object.keys(files)) {
@@ -108,6 +120,7 @@ async function loadExample(ask = true) {
 $('example').onclick = () => loadExample().catch(e => toast(e.message));
 function modeChanged(resetTop = true) { const board = $('mode').value === 'board'; $('duration-label').hidden = board; $('pause').disabled = !board; if (resetTop) $('top').value = board ? 'elevator_top' : 'tb_fsm'; resetHistory(); save(); }
 $('mode').onchange = () => modeChanged(); $('top').onchange = () => { resetHistory(); mapping = {}; save(); };
+$('timing').onchange = () => { resetHistory(); timingDescription(); save(); };
 for (const button of document.querySelectorAll('[data-tab]')) button.onclick = () => {
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('selected', b === button));
   for (const tab of ['console', 'waves', 'mapping']) $(tab).hidden = tab !== button.dataset.tab;
@@ -179,13 +192,14 @@ async function run(extra = []) {
   } catch (error) { commands = oldCommands; $('console').textContent = error.message; $('result').textContent = 'Simulation error'; document.querySelector('[data-tab="console"]').click(); }
   finally { busy = false; $('run').disabled = false; $('run').innerHTML = '▶ Run simulation <kbd>Ctrl ↵</kbd>'; }
 }
-$('run').onclick = () => run(); $('pause').onclick = () => { if (!liveToken) return; paused = !paused; $('pause').textContent = paused ? '▶ Resume' : 'Ⅱ Pause'; $('result').textContent = paused ? 'Paused' : 'Running'; }; $('reset').onclick = () => { resetHistory(); if ($('mode').value === 'board') run(); };
-document.querySelectorAll('[data-button]').forEach(button => button.onclick = () => { if (!liveToken) return toast('Press Run to start the continuous clock first'); holds.set(button.dataset.button,simNs+30000000); button.classList.add('pressed'); });
+$('run').onclick = () => run(); $('pause').onclick = () => { if (!liveToken) return; if(!paused){pausedAt=performance.now();paused=true;}else{pausedWall+=performance.now()-pausedAt;paused=false;} $('pause').textContent = paused ? '▶ Resume' : 'Ⅱ Pause'; $('result').textContent = paused ? 'Paused' : 'Running'; }; $('reset').onclick = () => { resetHistory(); if ($('mode').value === 'board') run(); };
+document.querySelectorAll('[data-button]').forEach(button => button.onclick = () => { if (!liveToken) return toast('Press Run to start the continuous clock first'); holds.set(button.dataset.button,{remainingNs:30000000/timeScale}); button.classList.add('pressed'); $('input-status').textContent = button.dataset.button === 'btnU' ? 'GO queued · switch value '+sw+'. Delivering to VHDL…' : button.dataset.button+' queued for VHDL.'; });
 window.addEventListener('pagehide',()=>{if(liveToken)fetch('/api/live/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session:liveToken}),keepalive:true}).catch(()=>{});});
 document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run(); } });
 async function init() {
-  try { const saved = JSON.parse(localStorage.getItem(storageKey)); if (saved?.files && Object.keys(saved.files).length) { files = saved.files; mapping = saved.mapping || {}; $('top').value = saved.top || 'elevator_top'; $('mode').value = saved.mode || 'board'; openFile(saved.current || Object.keys(files)[0]); modeChanged(false); } else await loadExample(false); }
+  try { const saved = JSON.parse(localStorage.getItem(storageKey)); if (saved?.files && Object.keys(saved.files).length) { files = saved.files; mapping = saved.mapping || {}; $('top').value = saved.top || 'elevator_top'; $('mode').value = saved.mode || 'board'; $('timing').value = saved.timing === 'interactive' ? 'interactive' : 'original'; openFile(saved.current || Object.keys(files)[0]); modeChanged(false); } else await loadExample(false); }
   catch { await loadExample(false); }
+  timingDescription();
   try { const health = await (await fetch('/api/health', {cache:'no-store'})).json(); $('app-version').textContent = 'FPGA WORKSPACE · v' + (health.app_version || 'unknown'); if (!health.ok) { $('console').textContent = health.error; $('result').textContent = 'GHDL setup required'; toast('GHDL is unavailable. See Terminal for setup instructions.'); } } catch { toast('Backend is unavailable. Start python3 server.py'); }
 }
 init();

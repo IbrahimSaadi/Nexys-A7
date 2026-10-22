@@ -1,4 +1,4 @@
-"""Persistent, unmodified VHDL simulation. Wall time never substitutes for HDL time."""
+"""Persistent VHDL simulation with explicitly selected hardware or preview timing."""
 import atexit
 from decimal import Decimal
 from pathlib import Path
@@ -85,6 +85,13 @@ class Session:
         self.elapsed = 0
         self.history = []
         self.closed = False
+        self.timing = data.get('timing', 'original')
+        if self.timing not in ('original', 'interactive'):
+            self.temp.cleanup()
+            raise ValueError('Unknown timing mode')
+        self.time_scale = 10000 if self.timing == 'interactive' else 1
+        self.overrides = []
+        self.inputs = {'sw': 0, 'buttons': []}
         try:
             files = data.get('files', {})
             if not isinstance(files, dict) or not 1 <= len(files) <= server.MAX_FILES:
@@ -92,10 +99,23 @@ class Session:
             top = data.get('top', '')
             if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', top):
                 raise ValueError('Invalid top entity')
+            expected = {'DIVISOR': (100000000, 10000), 'DEBOUNCE_CYCLES': (2000000, 200), 'SCAN_DIV': (50000, 5)}
+            applied = {}
             for name, text in files.items():
                 if not re.fullmatch(r'[\w.-]+\.(vhd|vhdl|xdc|txt)', name, re.I) or not isinstance(text, str):
                     raise ValueError('Invalid project file')
+                if self.timing == 'interactive' and name.lower().endswith(('.vhd','.vhdl')):
+                    # Scale only the known elevator timing profile, in disposable copies.
+                    # Unknown designs retain original mode rather than silently guessing.
+                    for constant, (original, preview) in expected.items():
+                        pattern = r'(\bconstant\s+' + constant + r'\s*:\s*integer\s*:=\s*)' + str(original) + r'\b'
+                        text, count = re.subn(pattern, lambda m: m[1]+str(preview), text, flags=re.I)
+                        if count:
+                            applied[constant] = applied.get(constant,0) + count
+                            self.overrides.append(f'{name}: {constant}={preview} (original {original})')
                 (Path(self.temp.name)/name).write_text(text, encoding='utf-8')
+            if self.timing == 'interactive' and any(applied.get(name) != 1 for name in expected):
+                raise ValueError('Interactive timing requires the standard elevator constants (DIVISOR=100000000, DEBOUNCE_CYCLES=2000000, SCAN_DIV=50000). Select Original timing for this design.')
             self.ports = server.ports('\n'.join(files.values()), top)
             if not self.ports:
                 raise ValueError('Board mode needs top-level ports. Use Testbench mode for a testbench.')
@@ -162,10 +182,15 @@ class Session:
             self.history.append([stamp, name, value])
         self.history = self.history[-4000:]
         digits = parts[3+len(self.outputs):3+len(self.outputs)+8]
+        sim_ns = (stamp-200000000)/1000000
+        heading = ('CONTINUOUS · ORIGINAL VHDL · 100 MHz / 10 ns · NO TIMING OVERRIDES' if self.timing == 'original' else
+                   'INTERACTIVE PREVIEW · COUNTERS SCALED 1:10000 IN TEMPORARY COPIES\n' + '\n'.join(self.overrides))
         return {'ok': True, 'board': True, 'ports': self.ports, 'mapping': self.mapping,
                 'digits': digits, 'sim_ns': (stamp-200000000)/1000000,
+                'board_ns': sim_ns*self.time_scale, 'timing': self.timing, 'time_scale': self.time_scale,
+                'overrides': self.overrides, 'inputs': self.inputs.copy(),
                 'wave': {'values':values, 'events': self.history[:], 'end':stamp, 'truncated':False},
-                'log': 'CONTINUOUS · ORIGINAL VHDL · 100 MHz / 10 ns · NO TIMING OVERRIDES\n' + '\n'.join(self.logs)}
+                'log': heading + '\n' + '\n'.join(self.logs)}
 
     def advance(self, data):
         with self.lock:
@@ -178,6 +203,7 @@ class Session:
             if not 0 <= switches <= 65535 or not 10 <= duration <= 10000000 or duration % 10:
                 raise ValueError('Invalid inputs or time interval (10 ns–10 ms, multiple of 10 ns)')
             mask = sum(1 << i for i, b in enumerate(['btnC','btnU','btnL','btnR','btnD']) if b in buttons)
+            self.inputs = {'sw': switches, 'buttons': list(buttons)}
             self.process.stdin.write(f'{switches} {mask} {duration}\n')
             self.process.stdin.flush()
             return self.frame()

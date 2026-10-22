@@ -24,6 +24,32 @@ jobs:
           $env:GHDL_PATH = (Resolve-Path runtime/ghdl/bin/ghdl.exe).Path
           & runtime/python/python.exe -m unittest -v test_lab.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install browser regression tools (not shipped in the app)
+        run: |
+          npm install --no-save --package-lock=false playwright@1.56.1
+          npx playwright install chromium
+      - name: Test switch and GO through the real Windows browser app
+        shell: pwsh
+        run: |
+          $app = (Resolve-Path portable/Nexys-Lab).Path
+          $python = Join-Path $app runtime/python/python.exe
+          $server = Start-Process -FilePath $python -ArgumentList @('server.py', '--port', '8011') -WorkingDirectory $app -PassThru -RedirectStandardOutput server-out.log -RedirectStandardError server-error.log
+          try {
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 120; $attempt++) {
+              try { $health = Invoke-RestMethod http://127.0.0.1:8011/api/health; if ($health.ok) { $ready = $true; break } } catch {}
+              Start-Sleep -Milliseconds 250
+            }
+            if (-not $ready) { throw 'Portable server did not become ready' }
+            $env:NEXYS_LAB_URL = 'http://127.0.0.1:8011'
+            node scripts/check_interaction.cjs
+            if ($LASTEXITCODE -ne 0) { throw 'Switch/GO browser regression failed' }
+          } finally {
+            Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: Nexys-Lab-Windows-x64

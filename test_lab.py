@@ -151,6 +151,34 @@ led<=std_logic_vector(n); end;'''
         finally:
             session.close()
 
+    def test_live_interactive_uses_real_vhdl_up_down_and_preserves_source(self):
+        files = self.files.copy()
+        session = live.Session({'files':files, 'top':'elevator_top', 'timing':'interactive'})
+        try:
+            self.assertEqual(session.initial['time_scale'],10000)
+            frame = session.advance({'sw':3,'buttons':['btnU'],'ns':3000})
+            self.assertEqual(frame['inputs'],{'sw':3,'buttons':['btnU']})
+            # Changing switches while moving must be ignored by the actual FSM.
+            frame = session.advance({'sw':15,'ns':300000})
+            self.assertEqual(frame['digits'][:2],['0110000','1000000'])
+            self.assertEqual(frame['wave']['values']['lab_board_tb.io_door'],'1')
+            self.assertEqual(frame['board_ns'],3030000000)
+            frame = session.advance({'ns':1000000})
+            self.assertEqual(frame['wave']['values']['lab_board_tb.io_door'],'0')
+            session.advance({'sw':0,'buttons':['btnU'],'ns':3000})
+            frame = session.advance({'sw':0,'ns':300000})
+            self.assertEqual(frame['digits'][:2],['1000000','1000000'])
+            self.assertEqual(frame['wave']['values']['lab_board_tb.io_door'],'1')
+            self.assertIn('COUNTERS SCALED',frame['log'])
+            self.assertEqual(files,self.files)
+            self.assertIn('100000000',self.files['clk_div.vhd'])
+        finally:
+            session.close()
+
+    def test_interactive_rejects_unrecognized_timing_profile(self):
+        with self.assertRaisesRegex(ValueError,'standard elevator constants'):
+            live.Session({'files':{'simple.vhd':'entity simple is end; architecture sim of simple is begin end;'},'top':'simple','timing':'interactive'})
+
 
 if __name__ == '__main__':
     unittest.main()
