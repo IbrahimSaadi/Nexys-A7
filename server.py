@@ -25,6 +25,9 @@ def find_ghdl():
         if candidate.is_file():
             return str(candidate.resolve())
         raise ValueError('GHDL_PATH does not point to GHDL: ' + configured + '. Set it to the full path of ghdl.exe (Windows) or ghdl, then restart the server.')
+    bundled = ROOT / 'runtime' / 'ghdl' / 'bin' / ('ghdl.exe' if os.name == 'nt' else 'ghdl')
+    if bundled.is_file():
+        return str(bundled)
     found = shutil.which('ghdl')
     if found:
         return found
@@ -278,9 +281,20 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', type=int, default=8000)
     parser.add_argument('--host', default='127.0.0.1')
+    parser.add_argument('--open-browser', action='store_true')
     args = parser.parse_args()
     status = simulator_status()
     if not status['ok']:
         print('Simulator setup required: ' + status['error'], flush=True)
+    httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f'Nexys Lab listening on {args.host}:{args.port}', flush=True)
-    ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
+    if args.open_browser:
+        import threading
+        import webbrowser
+        threading.Timer(0.5, lambda: webbrowser.open(f'http://127.0.0.1:{args.port}')).start()
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        httpd.server_close()

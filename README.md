@@ -4,6 +4,14 @@ A local VHDL development lab: multi-file editor, real GHDL execution, an interac
 
 ## Start
 
+### Windows portable edition (recommended)
+
+Download **Nexys-Lab-Windows-x64.zip** from [GitHub Releases](https://github.com/IbrahimSaadi/Nexys-A7/releases/latest), extract the **entire** ZIP into a writable folder, then double-click **Start-Nexys-Lab.cmd**. The browser opens automatically. Python and GHDL are included: no installation, administrator access, PATH setup, or Internet connection is needed to run. Keep the console window open; press Ctrl+C there to stop. Requires Windows 10/11 x64 (Intel/AMD).
+
+GitHub's **Code → Download ZIP** downloads source only, without the bundled runtimes. Use the portable release asset for one-click startup. A release appears only after the Windows build and tests pass.
+
+### Source edition
+
 Requires Python 3.10+ and GHDL with VHDL-2008 support. In the prepared cloud environment:
 
 ```sh
@@ -17,6 +25,8 @@ On your own Debian/Ubuntu computer, install `python3` and `ghdl` using the syste
 This server runs user HDL using a native compiler. Use it for your own trusted projects. It is not a multi-user hosting service or a security sandbox; do not expose it to the public Internet. Runs use disposable build directories and a 25-second subprocess timeout. VHDL file I/O is not sandboxed.
 
 ## Windows
+
+These manual steps apply to the **source edition**. The portable edition above already contains GHDL and Python.
 
 `[WinError 2] The system cannot find the file specified` when pressing Run usually means the GHDL executable cannot be found. Python alone is not enough to simulate VHDL.
 
@@ -67,3 +77,11 @@ python3 -m unittest -v test_lab.py
 ```
 
 Tests run the original elevator testbench, real top-level board up/down interaction with timing overrides, a different mapped VHDL design, compiler errors, assertion failures, and path validation.
+
+## Build a portable Windows distribution
+
+```sh
+python scripts/build_windows.py
+```
+
+This downloads pinned upstream GHDL and official CPython Windows packages, verifies their checksums, retains license notices, and writes `dist/Nexys-Lab-Windows-x64.zip` and its SHA256 file. GHDL's upstream source archive is included. Cached downloads are also verified before reuse. Package construction works on Linux or Windows; execution of the Windows binaries requires Windows. `.github/workflows/windows-portable.yml` builds on Windows, tests with the bundled Python and GHDL, then publishes a release for `v*` tags after the tests pass. Binary runtimes are release assets and are not committed into the source repository.

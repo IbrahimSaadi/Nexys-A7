@@ -69,6 +69,15 @@ architecture rtl of switch_test is begin lights <= not switches; end;'''
             self.assertIn('GHDL_PATH', server.simulator_status()['error'])
             self.assertFalse(server.simulator_status()['ok'])
 
+    def test_bundled_simulator_without_path_setup(self):
+        with tempfile.TemporaryDirectory(prefix='portable app ') as directory:
+            root = Path(directory)
+            executable = root/'runtime/ghdl/bin'/('ghdl.exe' if server.os.name == 'nt' else 'ghdl')
+            executable.parent.mkdir(parents=True)
+            executable.touch()
+            with patch('server.ROOT', root), patch.dict('os.environ', {'GHDL_PATH': ''}):
+                self.assertEqual(server.find_ghdl(), str(executable))
+
     def test_missing_simulator_is_actionable(self):
         with patch.dict('os.environ', {'GHDL_PATH': ''}), patch('server.shutil.which', return_value=None), patch('server.Path.is_file', return_value=False):
             status = server.simulator_status()
