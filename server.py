@@ -2,17 +2,20 @@
 """Local HDL lab. Simulation is real GHDL, never JavaScript emulation."""
 import argparse
 from collections import deque
+import errno
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import subprocess
 import tempfile
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 ROOT = Path(__file__).resolve().parent
 MAX_FILES = 40
+APP_VERSION = '0.2.1'
 
 
 def find_ghdl():
@@ -245,6 +248,10 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT/'web'), **kwargs)
 
+    def end_headers(self):
+        self.send_header('Cache-Control', 'no-store')
+        super().end_headers()
+
     def reply(self, data, status=200):
         raw = json.dumps(data).encode()
         self.send_response(status)
@@ -257,7 +264,7 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == '/api/example':
             return self.reply({'files': {p.name: p.read_text() for p in (ROOT/'examples/elevator').iterdir() if p.is_file()}})
         if self.path == '/api/health':
-            return self.reply(simulator_status())
+            return self.reply({**simulator_status(), 'app_version': APP_VERSION})
         super().do_GET()
 
     def do_POST(self):
@@ -277,21 +284,42 @@ class Handler(SimpleHTTPRequestHandler):
             self.reply({'error': str(exc)}, 400)
 
 
+class LabServer(ThreadingHTTPServer):
+    def server_bind(self):
+        if os.name == 'nt':
+            # Windows SO_REUSEADDR can permit two processes to share a port.
+            self.allow_reuse_address = False
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+def create_server(host, port, auto_port=False):
+    for candidate in range(port, port + (20 if auto_port and port else 1)):
+        try:
+            return LabServer((host, candidate), Handler)
+        except OSError as exc:
+            if not auto_port or not (exc.errno == errno.EADDRINUSE or getattr(exc, 'winerror', None) in (10048, 10013)):
+                raise
+    raise OSError('No free port found. Close old Nexys Lab server windows and retry.')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', type=int, default=8000)
     parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--open-browser', action='store_true')
+    parser.add_argument('--auto-port', action='store_true', help='Try the next port when the requested port is occupied')
     args = parser.parse_args()
     status = simulator_status()
     if not status['ok']:
         print('Simulator setup required: ' + status['error'], flush=True)
-    httpd = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f'Nexys Lab listening on {args.host}:{args.port}', flush=True)
+    httpd = create_server(args.host, args.port, args.auto_port)
+    actual_port = httpd.server_address[1]
+    print(f'Nexys Lab v{APP_VERSION} listening on {args.host}:{actual_port}', flush=True)
     if args.open_browser:
         import threading
         import webbrowser
-        threading.Timer(0.5, lambda: webbrowser.open(f'http://127.0.0.1:{args.port}')).start()
+        threading.Timer(0.5, lambda: webbrowser.open(f'http://127.0.0.1:{actual_port}')).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

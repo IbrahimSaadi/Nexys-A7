@@ -126,6 +126,6 @@ document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.ke
 async function init() {
   try { const saved = JSON.parse(localStorage.getItem(storageKey)); if (saved?.files && Object.keys(saved.files).length) { files = saved.files; mapping = saved.mapping || {}; $('top').value = saved.top || 'elevator_top'; $('mode').value = saved.mode || 'board'; openFile(saved.current || Object.keys(files)[0]); modeChanged(false); } else await loadExample(false); }
   catch { await loadExample(false); }
-  try { const health = await (await fetch('/api/health')).json(); if (!health.ok) { $('console').textContent = health.error; $('result').textContent = 'GHDL setup required'; toast('GHDL is unavailable. See Terminal for setup instructions.'); } } catch { toast('Backend is unavailable. Start python3 server.py'); }
+  try { const health = await (await fetch('/api/health', {cache:'no-store'})).json(); $('app-version').textContent = 'FPGA WORKSPACE · v' + (health.app_version || 'unknown'); if (!health.ok) { $('console').textContent = health.error; $('result').textContent = 'GHDL setup required'; toast('GHDL is unavailable. See Terminal for setup instructions.'); } } catch { toast('Backend is unavailable. Start python3 server.py'); }
 }
 init();

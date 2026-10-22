@@ -3,6 +3,9 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 import tempfile
+import threading
+import urllib.request
+import json
 import server
 
 
@@ -84,6 +87,34 @@ architecture rtl of switch_test is begin lights <= not switches; end;'''
             self.assertFalse(status['ok'])
             self.assertIn('GHDL was not found', status['error'])
             self.assertIn('PowerShell', status['error'])
+
+    def test_occupied_port_uses_new_server_and_uncached_assets(self):
+        old = server.create_server('127.0.0.1', 0)
+        new = None
+        thread = None
+        try:
+            port = old.server_address[1]
+            if port > 65515:
+                self.skipTest('Ephemeral port too close to port range limit')
+            new = server.create_server('127.0.0.1', port, auto_port=True)
+            self.assertNotEqual(new.server_address[1], port)
+            thread = threading.Thread(target=new.serve_forever, daemon=True)
+            thread.start()
+            base = 'http://127.0.0.1:' + str(new.server_address[1])
+            with urllib.request.urlopen(base+'/api/health') as response:
+                health = json.load(response)
+                self.assertEqual(health['app_version'], server.APP_VERSION)
+                self.assertTrue(health['ok'], health)
+                self.assertEqual(response.headers['Cache-Control'], 'no-store')
+            with urllib.request.urlopen(base+'/app.js') as response:
+                self.assertEqual(response.headers['Cache-Control'], 'no-store')
+        finally:
+            old.server_close()
+            if new:
+                if thread:
+                    new.shutdown()
+                    thread.join()
+                new.server_close()
 
 
 if __name__ == '__main__':

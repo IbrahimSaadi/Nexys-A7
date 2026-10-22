@@ -10,6 +10,8 @@ Download **Nexys-Lab-Windows-x64.zip** from [GitHub Releases](https://github.com
 
 GitHub's **Code → Download ZIP** downloads source only, without the bundled runtimes. Use the portable release asset for one-click startup. A release appears only after the Windows build and tests pass.
 
+The launcher automatically chooses a free port if an older server is already running. Use the browser tab it opens; do not reuse an old port-8000 bookmark. The header shows the application version. Close previous server windows before starting again when possible. Browser-saved projects belong to the current address/port; export edits before switching versions or ports and import the JSON in the new tab.
+
 ### Source edition
 
 Requires Python 3.10+ and GHDL with VHDL-2008 support. In the prepared cloud environment:

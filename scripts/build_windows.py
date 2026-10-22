@@ -89,7 +89,8 @@ def build(cache, output):
             'Python 3.13.7 and GHDL 6.0.0 are included. No installation, admin access,\n'
             'PATH changes, or Internet connection are needed to run this package.\n'
             'Supported target: Windows 10/11 x64 (Intel/AMD).\n'
-            'If port 8000 is occupied, stop the previous Nexys Lab window first.\n'
+            'The launcher uses a free port automatically if port 8000 is occupied.\n'
+            'Use the browser tab opened by the launcher, not an old bookmark.\n'
             'See README.md and third_party for usage, limitations and license notices.\n', encoding='utf-8')
         package = output/'Nexys-Lab-Windows-x64.zip'
         with zipfile.ZipFile(package, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as z:

@@ -18,7 +18,7 @@ rem The portable edition always uses the simulator shipped alongside it.
 set "GHDL_PATH=%~dp0runtime\ghdl\bin\ghdl.exe"
 echo Starting Nexys Lab. Keep this window open while using the application.
 echo Press Ctrl+C in this window to stop the server.
-"runtime\python\python.exe" server.py --open-browser
+"runtime\python\python.exe" server.py --open-browser --auto-port
 if errorlevel 1 (
   echo.
   echo Nexys Lab could not start. Read the error above.
