@@ -15,7 +15,7 @@ from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 ROOT = Path(__file__).resolve().parent
 MAX_FILES = 40
-APP_VERSION = '0.2.1'
+APP_VERSION = '0.3.0'
 
 
 def find_ghdl():
@@ -277,6 +277,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self.reply({'error': 'Project exceeds 2 MB'}, 413)
         try:
             data = json.loads(self.rfile.read(length))
+            if self.path in ('/api/live/start', '/api/live/advance', '/api/live/stop'):
+                import live
+                return self.reply(live.api(self.path.rsplit('/', 1)[-1], data))
             if self.path == '/api/run':
                 return self.reply(simulate(data))
             self.reply({'error': 'Unknown endpoint'}, 404)

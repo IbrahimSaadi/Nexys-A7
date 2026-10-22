@@ -1,89 +1,75 @@
 # Nexys Lab
 
-A local VHDL development lab: multi-file editor, real GHDL execution, an interactive Nexys A7 style board, signal preview, and VCD export. Includes the supplied 16-floor elevator project without source changes.
+VHDL editor and continuous Nexys A7 style 2D board, powered by real GHDL simulation. Includes the supplied 16-floor elevator without changing its source files.
 
-## Start
+## Windows portable edition
 
-### Windows portable edition (recommended)
+Download **Nexys-Lab-Windows-x64.zip** from [GitHub Releases](https://github.com/IbrahimSaadi/Nexys-A7/releases/latest). Extract the entire ZIP to a writable folder and double-click **Start-Nexys-Lab.cmd**. Python and GHDL are included. No installation, PATH changes, administrator privileges or Internet connection are required to run. The launcher opens the browser and finds a free port if an older server is running. Keep its console open; Ctrl+C stops the app.
 
-Download **Nexys-Lab-Windows-x64.zip** from [GitHub Releases](https://github.com/IbrahimSaadi/Nexys-A7/releases/latest), extract the **entire** ZIP into a writable folder, then double-click **Start-Nexys-Lab.cmd**. The browser opens automatically. Python and GHDL are included: no installation, administrator access, PATH setup, or Internet connection is needed to run. Keep the console window open; press Ctrl+C there to stop. Requires Windows 10/11 x64 (Intel/AMD).
+Use the newly opened browser tab, not an old bookmark. The header shows the running version. Code → Download ZIP is the source edition, without runtimes. Browser-local projects belong to the current address/port: export your edits before moving to a new version or port, then import the JSON.
 
-GitHub's **Code → Download ZIP** downloads source only, without the bundled runtimes. Use the portable release asset for one-click startup. A release appears only after the Windows build and tests pass.
+## Continuous board mode
 
-The launcher automatically chooses a free port if an older server is already running. Use the browser tab it opens; do not reuse an old port-8000 bookmark. The header shows the application version. Close previous server windows before starting again when possible. Browser-saved projects belong to the current address/port; export edits before switching versions or ports and import the JSON in the new tab.
+1. Select **Interactive board**, top entity `elevator_top`, then press **Run** once.
+2. Set SW3–SW0 to the destination (0–15). Click Up / GO.
+3. The simulation clock runs automatically. No Advance tick button is needed.
+4. Pause/Resume freezes and continues HDL time without restarting the circuit. Stop ends the session. Reset session starts a fresh circuit.
 
-### Source edition
+The backend keeps one GHDL process and its state alive per session. It applies switch/button changes between 1 ms HDL intervals. A click generates at least 30 ms of HDL button input, enough for the design's original 20 ms debounce. Switch changes are delivered at the next interval. This interval-based I/O is not analog contact bounce or sub-cycle physical input timing.
 
-Requires Python 3.10+ and GHDL with VHDL-2008 support. In the prepared cloud environment:
+### Clock and time accuracy
+
+The clock is **100 MHz**, exactly **10 ns** per period in HDL time. Board mode uses the original source constants: no DIVISOR, DEBOUNCE_CYCLES or SCAN_DIV overrides. A one-second divider therefore requires 100 million clock cycles, just as described by the source. The door timer and travel timing come from actual VHDL, not JavaScript logic.
+
+**Exact HDL time is not a guarantee of real-time execution.** An event-driven CPU simulator can run much slower than a physical FPGA. The UI shows HDL time, elapsed wall time and the measured ratio. It never labels software lag as real-time speed or compensates by changing the design. On the onboarding machine a 1 ms elevator interval took roughly 170 ms of wall time; your Windows machine may differ. Button debounce, floor travel and door timers can therefore take longer in wall time. If simulation can outrun wall time, the frontend paces requests to at most 1×.
+
+The new board is a vector representation following the supplied board layout, not an exact photograph. Switches, buttons, LEDs and eight multiplexed seven-segment digits are functional. Other connectors and chips are visual references: DDR, VGA, USB, Ethernet, Pmod peripherals and full FPGA silicon are not emulated.
+
+## Editor and future projects
+
+- Import `.vhd`, `.vhdl`, `.xdc`, `.txt` files or an exported project JSON. Create, edit and delete files in the explorer. Source edits save to browser localStorage, not server example files. Export project creates a portable backup.
+- Board mode supports scalar `std_logic` and numeric fixed-width `std_logic_vector` ports. Run to discover ports; use **Port mapping** to bind the 100 MHz clock, switches, buttons, LEDs, segment, anodes and door. Mapping changes stop the old session; Run starts the new binding. Narrow switch inputs use low-order bits. Unmapped inputs remain zero.
+- The active-low display expects `segment(6 downto 0)` in gfedcba order and `an(7 downto 0)`. The backend samples settled multiplex transitions to reconstruct all digits. Decimal point is available as a sampled output but is not yet rendered on the board.
+- Generic-dependent widths, custom types, other libraries, or vendor IP may need a wrapper or additional libraries. Use Testbench mode for interfaces the board adapter cannot bind.
+- XDC files are retained for export; GHDL does not consume physical pin constraints. Virtual controls use the Port mapping tab.
+
+## Testbench and waveforms
+
+Select **Testbench**, top `tb_fsm`, duration `2us`, and Run. The included testbench must print **ALL FSM TESTS PASSED**. This mode generates a full VCD and honors the configured stop time. A successful stop-time run alone does not prove correctness: write self-checking assertions.
+
+Live board mode previews **sampled output values** at frame boundaries and exports `live-samples.vcd`. It does not record every internal signal or 100 MHz edge, avoiding massive trace files during continuous runs. The seven-segment display is monitored inside VHDL between frames so multiplexing is preserved. For full clock-resolution waveform analysis, use Testbench mode and export its VCD.
+
+## Source edition setup
+
+Requires Python 3.10+ and GHDL supporting VHDL-2008. No Python/npm packages are required to run.
 
 ```sh
 cd /workspace/Nexys-A7
 . /workspace/.nexys-tools/activate.sh
-python3 server.py
+python3 server.py --auto-port --open-browser
 ```
 
-On your own Debian/Ubuntu computer, install `python3` and `ghdl` using the system package manager, then run `python3 server.py` from this folder. Open the local server on port 8000 in your browser. The default listener is loopback only. No Python or npm packages are needed.
-
-This server runs user HDL using a native compiler. Use it for your own trusted projects. It is not a multi-user hosting service or a security sandbox; do not expose it to the public Internet. Runs use disposable build directories and a 25-second subprocess timeout. VHDL file I/O is not sandboxed.
-
-## Windows
-
-These manual steps apply to the **source edition**. The portable edition above already contains GHDL and Python.
-
-`[WinError 2] The system cannot find the file specified` when pressing Run usually means the GHDL executable cannot be found. Python alone is not enough to simulate VHDL.
-
-1. Install Python 3.10+ and download the appropriate Windows GHDL build from [official GHDL releases](https://github.com/ghdl/ghdl/releases). Choose a native Windows build matching your computer; a Linux archive cannot run on Windows. Extract the **entire** archive so its libraries and DLLs stay together.
-2. Add the folder containing `ghdl.exe` to your user `PATH`, then open a new PowerShell window. Check `ghdl --version`.
-3. Alternatively, set the executable explicitly in the same PowerShell window that starts the app (replace the example path with your actual extracted path):
+On Debian/Ubuntu install Python and GHDL using your system package manager. On Windows, source-edition users can install a native x64 GHDL release, extract it completely, and set its path in PowerShell:
 
 ```powershell
 $env:GHDL_PATH = 'C:\Tools\ghdl\bin\ghdl.exe'
 & $env:GHDL_PATH --version
-py server.py
+py server.py --auto-port --open-browser
 ```
 
-Run from the folder containing `server.py`. Open the local server on port 8000 in a browser. `GHDL_PATH` accepts either the executable or its containing directory and supports paths with spaces. The variable shown above lasts for this PowerShell session. Restart an already-running server after updating its environment. If GHDL is missing or cannot start, the app's Terminal and server startup now show a setup error instead of a raw WinError.
+Portable-edition users do not need those manual steps. A raw WinError 2 usually means a source-edition GHDL executable was not found; the current app displays an actionable setup message instead. Default source listener: loopback port 8000; --auto-port tries the next ports if needed.
 
-## Elevator
+Only run your own trusted HDL. GHDL is a native compiler/runtime, including VHDL file I/O. This local app is not a security sandbox or a multi-user public service. Session count is limited to four; idle sessions close after two minutes without requests. A live interval that takes over 30 seconds stops the session. No Vivado, bitstream generation or physical FPGA programming is included.
 
-1. Load the elevator example; choose **Interactive board**, top `elevator_top`.
-2. Run once to initialize. Set SW3–SW0 to the destination in binary.
-3. Click the Up button (GO), then **Advance 1 tick** for each floor.
-4. The actual VHDL drives the multiplexed display and door LED. At arrival the door stays open for ten ticks.
-5. To run the original assertions, select **Testbench**, top `tb_fsm`, duration `2us`, then Run.
-
-Board interactions replay the command history from reset in GHDL. They are discrete simulation actions, not a continuously running FPGA. Changing switches takes effect at the next board action. Reset session clears simulation history. Each button click is a simulated press and release.
-
-### Accelerated timing
-
-The elevator uses 100 MHz and a 100-million-cycle second. Interactive board mode defaults to temporary build-copy overrides of `DIVISOR=1000`, `DEBOUNCE_CYCLES=20`, `SCAN_DIV=5`, giving a logical one-second tick in 10 microseconds. The terminal lists every applied override. Project/editor source files are never modified by this feature. Testbench mode never applies overrides. Disable acceleration for original constants; long hardware-time runs may hit the timeout.
-
-Other designs are not automatically accelerated unless they use these exact constant names. Advance 1 tick means a 10-microsecond wait when accelerated, or a one-second wait otherwise, plus a 300-nanosecond settling interval. This does not guarantee a clock-enable pulse in an arbitrary future design.
-
-## Future VHDL projects
-
-- Import `.vhd`, `.vhdl`, `.xdc`, `.txt`, or an exported project JSON. Create, edit, and remove files in the explorer.
-- Source edits persist in this browser's local storage; **Export project** makes a portable JSON backup. They do not overwrite server example files or automatically commit to Git.
-- **Testbench mode** compiles the project and runs the selected entity until the configured duration or HDL termination. HDL assertions determine failures; a simulation that stops at its time limit is not proof of correctness. Use self-checking testbenches.
-- **Board mode** discovers scalar `std_logic` and numeric fixed-width `std_logic_vector` top-level ports. The Port mapping tab binds input ports to the clock, switches, or buttons, and output ports to LEDs, segment, anodes, decimal point, or door. `sw` uses the least significant bits for narrow vectors. Unmapped inputs are zero. Generic-dependent widths, custom types, external libraries, and advanced interfaces require Testbench mode or a future adapter.
-- Active-low `segment(6 downto 0)` uses `gfedcba`; active-low `an(7 downto 0)` selects digits. The display is reconstructed from actual multiplexed signal transitions. Decimal-point output is available in waveforms; it is not currently rendered on the board.
-- **Waveforms** provides a compact transition preview. Download VCD for full analysis in a waveform viewer. Preview retains the latest 20,000 non-clock transitions and up to 28 signals.
-- `.xdc` files are retained for export and future hardware work. They are not consumed by GHDL and do not determine virtual board mapping.
-
-This is functional RTL simulation, not a complete emulation of FPGA silicon, DDR, USB, Ethernet, timing closure, or vendor IP. No Vivado, synthesis-to-device flow, bitstream generation, or board programming is included. Only VHDL is supported in this version.
-
-## Validation
+## Validation and portable builds
 
 ```sh
 python3 -m unittest -v test_lab.py
+python3 scripts/build_windows.py
 ```
 
-Tests run the original elevator testbench, real top-level board up/down interaction with timing overrides, a different mapped VHDL design, compiler errors, assertion failures, and path validation.
+Tests cover the supplied FSM assertions, legacy batch simulation, persistent state, exactly 1,000 cycles per 10 microseconds, original 20 ms debounce, multiplexed digits, another mapped design, failure handling, portable simulator detection and occupied ports. Binary runtimes do not enter Git.
 
-## Build a portable Windows distribution
+The build script verifies pinned official GHDL and CPython downloads and includes their licenses and GHDL source. It produces the portable ZIP and SHA256 file under dist/. GitHub Actions builds on Windows, runs tests using the bundled Windows Python and GHDL, then publishes tagged v* releases only after tests pass.
 
-```sh
-python scripts/build_windows.py
-```
-
-This downloads pinned upstream GHDL and official CPython Windows packages, verifies their checksums, retains license notices, and writes `dist/Nexys-Lab-Windows-x64.zip` and its SHA256 file. GHDL's upstream source archive is included. Cached downloads are also verified before reuse. Package construction works on Linux or Windows; execution of the Windows binaries requires Windows. `.github/workflows/windows-portable.yml` builds on Windows, tests with the bundled Python and GHDL, then publishes a release for `v*` tags after the tests pass. Binary runtimes are release assets and are not committed into the source repository.
+Hardware facts and the 24 checked elevator pin mappings are documented in [board-reference.md](docs/board-reference.md).

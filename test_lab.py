@@ -6,6 +6,7 @@ import tempfile
 import threading
 import urllib.request
 import json
+import live
 import server
 
 
@@ -115,6 +116,40 @@ architecture rtl of switch_test is begin lights <= not switches; end;'''
                     new.shutdown()
                     thread.join()
                 new.server_close()
+
+    def test_live_clock_preserves_state_and_exact_100mhz(self):
+        text = '''library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
+entity counter is port(clk,rst:in std_logic; led:out std_logic_vector(15 downto 0)); end;
+architecture rtl of counter is signal n:unsigned(15 downto 0):=(others=>'0'); begin
+process(clk) begin if rising_edge(clk) then if rst='1' then n<=(others=>'0'); else n<=n+1; end if; end if; end process;
+led<=std_logic_vector(n); end;'''
+        session = live.Session({'files':{'counter.vhd':text},'top':'counter'})
+        try:
+            before = int(session.initial['wave']['values']['lab_board_tb.io_led'], 2)
+            frame = session.advance({'ns':10000})
+            after = int(frame['wave']['values']['lab_board_tb.io_led'], 2)
+            self.assertEqual((after-before)%65536,1000)
+            self.assertEqual(frame['sim_ns'],10000)
+            frame = session.advance({'ns':10000})
+            final = int(frame['wave']['values']['lab_board_tb.io_led'],2)
+            self.assertEqual((final-after)%65536,1000)
+            self.assertEqual(frame['sim_ns'],20000)
+        finally:
+            session.close()
+
+    def test_live_elevator_uses_original_debounce_and_display(self):
+        session = live.Session({'files':self.files,'top':'elevator_top'})
+        try:
+            # Same-floor request: original 20 ms debounce must be respected.
+            frame = session.advance({'ns':10000000,'buttons':['btnU']})
+            self.assertEqual(frame['wave']['values']['lab_board_tb.io_door'],'0')
+            session.advance({'ns':10000000,'buttons':['btnU']})
+            frame = session.advance({'ns':1000000,'buttons':['btnU']})
+            self.assertEqual(frame['wave']['values']['lab_board_tb.io_door'],'1')
+            self.assertEqual(frame['digits'][:2],['1000000','1000000'])
+            self.assertIn('NO TIMING OVERRIDES',frame['log'])
+        finally:
+            session.close()
 
 
 if __name__ == '__main__':

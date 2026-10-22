@@ -2,12 +2,59 @@
 const $ = id => document.getElementById(id);
 let files = {}, current = '', commands = [], mapping = {}, sw = 0, busy = false, last = null;
 const storageKey = 'nexys-lab-project-v1';
+let liveToken = null, paused = false, liveGeneration = 0, simNs = 0, wallStart = 0, liveTimer = null;
+const holds = new Map();
+async function liveRequest(action, body) {
+  const response = await fetch('/api/live/' + action, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  const data = await response.json(); if (!response.ok || data.error) throw Error(data.error || response.statusText); return data;
+}
+function stopLive() {
+  ++liveGeneration; clearTimeout(liveTimer); const token = liveToken; liveToken = null; holds.clear();
+  if (token) liveRequest('stop', {session:token}).catch(()=>{});
+  document.querySelectorAll('[data-button]').forEach(b=>b.classList.remove('pressed'));
+  $('run').innerHTML = '▶ Run simulation <kbd>Ctrl ↵</kbd>';
+}
+async function startLive() {
+  if (liveToken) { stopLive(); $('result').textContent = 'Stopped'; return; }
+  if (busy) return;
+  busy = true; $('run').disabled = true; $('result').textContent = 'Compiling original VHDL…';
+  const generation = ++liveGeneration;
+  try {
+    const data = await liveRequest('start', {files, top:$('top').value, mapping});
+    if (generation !== liveGeneration) { await liveRequest('stop',{session:data.session}); return; }
+    liveToken = data.session; mapping = data.mapping; simNs = 0; paused = false; holds.clear(); wallStart = performance.now();
+    $('pause').textContent = 'Ⅱ Pause'; $('run').textContent = '■ Stop simulation'; $('console').textContent = data.log;
+    renderBoard(data); renderMapping(data); save();
+    const pump = async () => {
+      if (!liveToken || generation !== liveGeneration) return;
+      if (paused) { liveTimer = setTimeout(pump, 100); return; }
+      try {
+        const begin = performance.now();
+        const buttons = [...holds].filter(([,until])=>simNs < until).map(([name])=>name);
+        const frame = await liveRequest('advance', {session:liveToken, sw, buttons, ns:1000000});
+        if (generation !== liveGeneration) return;
+        simNs = frame.sim_ns; last = frame;
+        renderBoard(frame); renderWaves(frame.wave);
+        const wall = (performance.now()-wallStart)/1000, sim = simNs/1e9;
+        $('sim-time').textContent = sim.toFixed(6) + ' s'; $('wall-time').textContent = wall.toFixed(2)+' s';
+        $('sim-speed').textContent = (sim/Math.max(wall,0.001)).toFixed(4)+'× real time';
+        $('result').textContent = '● Running · original timing'; $('result').style.color = '#b5ec69';
+        document.querySelectorAll('[data-button]').forEach(b=>b.classList.toggle('pressed',simNs < (holds.get(b.dataset.button)||0)));
+        // Never run ahead of wall time; slower simulation remains visibly slower.
+        const wait = Math.max(0, sim*1000-(performance.now()-wallStart), 16-(performance.now()-begin));
+        liveTimer = setTimeout(pump,wait);
+      } catch (error) { if (generation === liveGeneration) { stopLive(); $('console').textContent = error.message; $('result').textContent = 'Simulator stopped'; } }
+    };
+    pump();
+  } catch (error) { $('console').textContent = error.message; $('result').textContent = 'Compilation failed'; }
+  finally { busy = false; $('run').disabled = false; }
+}
 function toast(message) { $('toast').textContent = message; $('toast').classList.add('show'); setTimeout(() => $('toast').classList.remove('show'), 3000); }
 function save() {
   try { localStorage.setItem(storageKey, JSON.stringify({files, current, top: $('top').value, mode: $('mode').value, mapping})); $('saved').textContent = '● Saved locally'; }
   catch { $('saved').textContent = 'Storage full · export your project'; }
 }
-function resetHistory() { commands = []; last = null; renderBoard({}); $('result').textContent = 'Session reset'; }
+function resetHistory() { stopLive(); commands = []; last = null; simNs = 0; renderBoard({}); $('result').textContent = 'Session reset'; $('sim-time').textContent='0.000000 s'; $('wall-time').textContent='0.00 s'; $('sim-speed').textContent='—'; }
 function fileList() {
   $('files').replaceChildren();
   for (const name of Object.keys(files)) {
@@ -30,7 +77,17 @@ $('new-file').onclick = () => { const name = prompt('File name, for example coun
 $('delete-file').onclick = () => { if (current && confirm(`Delete ${current}?`)) { delete files[current]; resetHistory(); openFile(Object.keys(files)[0] || ''); } };
 function download(name, text, type = 'text/plain') { const url = URL.createObjectURL(new Blob([text], {type})); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 $('export').onclick = () => download('nexys-project.json', JSON.stringify({files, top: $('top').value, mode: $('mode').value, mapping}, null, 2), 'application/json');
-$('download-vcd').onclick = () => last?.vcd ? download('signals.vcd', last.vcd) : toast('Run a simulation first');
+$('download-vcd').onclick = () => {
+  if (last?.vcd) return download('signals.vcd',last.vcd);
+  if (!last?.wave) return toast('Run a simulation first');
+  const names=Object.keys(last.wave.values), ids=Object.fromEntries(names.map((n,i)=>[n,'s'+i]));
+  let text='$comment Sampled live outputs only; use Testbench mode for full clock-resolution VCD. $end\n$timescale 1 fs $end\n$scope module live_samples $end\n';
+  for(const name of names) text+='$var wire '+last.wave.values[name].length+' '+ids[name]+' '+name.replace(/\W/g,'_')+' $end\n';
+  text+='$upscope $end\n$enddefinitions $end\n';
+  let previous=-1;
+  for(const [stamp,name,value] of last.wave.events) { if(stamp!==previous){text+='#'+stamp+'\n';previous=stamp;} text+='b'+value+' '+ids[name]+'\n'; }
+  download('live-samples.vcd',text); toast('Exported sampled outputs, not a full clock trace');
+};
 $('import').onclick = () => $('upload').click();
 $('upload').onchange = async e => {
   try {
@@ -49,8 +106,8 @@ async function loadExample(ask = true) {
   const response = await fetch('/api/example'); const project = await response.json(); files = project.files; mapping = {}; $('top').value = 'elevator_top'; $('mode').value = 'board'; resetHistory(); openFile('elevator_top.vhd'); modeChanged(false);
 }
 $('example').onclick = () => loadExample().catch(e => toast(e.message));
-function modeChanged(resetTop = true) { const board = $('mode').value === 'board'; $('duration-label').hidden = board; $('step').disabled = !board; if (resetTop) $('top').value = board ? 'elevator_top' : 'tb_fsm'; resetHistory(); save(); }
-$('mode').onchange = () => modeChanged(); $('top').onchange = () => { resetHistory(); mapping = {}; save(); }; $('fast').onchange = () => { resetHistory(); $('timing-note').textContent = $('fast').checked ? 'Temporary simulation copies: 1 s → 10 µs, debounce → 200 ns. Original files stay unchanged. Other designs keep their own timing constants.' : 'Real timing: a one-second simulation requires 100 million clock cycles and may exceed the runtime limit.'; };
+function modeChanged(resetTop = true) { const board = $('mode').value === 'board'; $('duration-label').hidden = board; $('pause').disabled = !board; if (resetTop) $('top').value = board ? 'elevator_top' : 'tb_fsm'; resetHistory(); save(); }
+$('mode').onchange = () => modeChanged(); $('top').onchange = () => { resetHistory(); mapping = {}; save(); };
 for (const button of document.querySelectorAll('[data-tab]')) button.onclick = () => {
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('selected', b === button));
   for (const tab of ['console', 'waves', 'mapping']) $(tab).hidden = tab !== button.dataset.tab;
@@ -82,6 +139,7 @@ function renderBoard(result) {
     }
     if (seg !== null && an !== null) for (let i = 0; i < 8; i++) if (!(an & (1 << i))) digits[i] = seg;
   }
+  if (result.digits) result.digits.forEach((value,i)=>{ const v=integer(value); if(v!==null) digits[i]=v; });
   for (let i = 0; i < 8; i++) $(`digit-${i}`).querySelectorAll('polygon').forEach((p,j) => p.classList.toggle('on', digits[i] !== undefined && !(digits[i] & (1 << j))));
 }
 function renderMapping(result) {
@@ -106,10 +164,11 @@ function renderWaves(wave) {
   }
 }
 async function run(extra = []) {
-  if (busy) return; busy = true; $('run').disabled = true; $('step').disabled = true; $('run').textContent = '◌ Simulating…'; $('result').textContent = 'GHDL running';
+  if ($('mode').value === 'board') return startLive();
+  if (busy) return; busy = true; $('run').disabled = true; $('run').textContent = '◌ Simulating…'; $('result').textContent = 'GHDL running';
   const oldCommands = commands.slice(); commands.push(...extra);
   try {
-    const res = await fetch('/api/run', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({files, top:$('top').value, mode:$('mode').value, duration:$('duration').value, fast:$('fast').checked, commands, mapping})});
+    const res = await fetch('/api/run', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({files, top:$('top').value, mode:$('mode').value, duration:$('duration').value, fast:false, commands, mapping})});
     const result = await res.json(); if (!res.ok || result.error) throw Error(result.error || res.statusText);
     $('console').textContent = (result.overrides?.length ? 'ACCELERATED TIMING (temporary copies only):\n' + result.overrides.join('\n') + '\n\n' : '') + result.log;
     $('result').textContent = result.ok ? '● Simulation passed' : '● ' + result.phase + ' failed'; $('result').style.color = result.ok ? '#b5ec69' : '#fa897f';
@@ -118,10 +177,11 @@ async function run(extra = []) {
     if (result.board) { mapping = result.mapping; renderBoard(result); renderMapping(result); }
     renderWaves(result.wave); save();
   } catch (error) { commands = oldCommands; $('console').textContent = error.message; $('result').textContent = 'Simulation error'; document.querySelector('[data-tab="console"]').click(); }
-  finally { busy = false; $('run').disabled = false; $('step').disabled = $('mode').value !== 'board'; $('run').innerHTML = '▶ Run simulation <kbd>Ctrl ↵</kbd>'; }
+  finally { busy = false; $('run').disabled = false; $('run').innerHTML = '▶ Run simulation <kbd>Ctrl ↵</kbd>'; }
 }
-$('run').onclick = () => run(); $('step').onclick = () => run([{sw, buttons:[], ticks:1}]); $('reset').onclick = () => { resetHistory(); if ($('mode').value === 'board') run(); };
-document.querySelectorAll('[data-button]').forEach(button => button.onclick = async () => { if ($('mode').value !== 'board') return toast('Select Board mode first'); button.classList.add('pressed'); await run([{sw,buttons:[button.dataset.button],ticks:0},{sw,buttons:[],ticks:0}]); button.classList.remove('pressed'); });
+$('run').onclick = () => run(); $('pause').onclick = () => { if (!liveToken) return; paused = !paused; $('pause').textContent = paused ? '▶ Resume' : 'Ⅱ Pause'; $('result').textContent = paused ? 'Paused' : 'Running'; }; $('reset').onclick = () => { resetHistory(); if ($('mode').value === 'board') run(); };
+document.querySelectorAll('[data-button]').forEach(button => button.onclick = () => { if (!liveToken) return toast('Press Run to start the continuous clock first'); holds.set(button.dataset.button,simNs+30000000); button.classList.add('pressed'); });
+window.addEventListener('pagehide',()=>{if(liveToken)fetch('/api/live/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session:liveToken}),keepalive:true}).catch(()=>{});});
 document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run(); } });
 async function init() {
   try { const saved = JSON.parse(localStorage.getItem(storageKey)); if (saved?.files && Object.keys(saved.files).length) { files = saved.files; mapping = saved.mapping || {}; $('top').value = saved.top || 'elevator_top'; $('mode').value = saved.mode || 'board'; openFile(saved.current || Object.keys(files)[0]); modeChanged(false); } else await loadExample(false); }
