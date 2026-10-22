@@ -3,6 +3,7 @@
 import argparse
 from collections import deque
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -11,8 +12,37 @@ import tempfile
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 ROOT = Path(__file__).resolve().parent
-GHDL = shutil.which('ghdl') or '/workspace/.nexys-tools/bin/ghdl'
 MAX_FILES = 40
+
+
+def find_ghdl():
+    """Resolve locally; never assume the cloud machine's paths exist on Windows."""
+    configured = os.environ.get('GHDL_PATH', '').strip().strip('"')
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_dir():
+            candidate /= 'ghdl.exe' if os.name == 'nt' else 'ghdl'
+        if candidate.is_file():
+            return str(candidate.resolve())
+        raise ValueError('GHDL_PATH does not point to GHDL: ' + configured + '. Set it to the full path of ghdl.exe (Windows) or ghdl, then restart the server.')
+    found = shutil.which('ghdl')
+    if found:
+        return found
+    cloud = Path('/workspace/.nexys-tools/bin/ghdl')
+    if os.name != 'nt' and cloud.is_file():
+        return str(cloud)
+    raise ValueError('GHDL was not found. Install GHDL from https://github.com/ghdl/ghdl/releases, add its bin folder to PATH, and restart the terminal and server. On Windows you can instead set $env:GHDL_PATH = "C:\\path\\to\\ghdl\\bin\\ghdl.exe" in PowerShell before running py server.py. Verify with ghdl --version. See the Windows section in README.md.')
+
+
+def simulator_status():
+    try:
+        executable = find_ghdl()
+        result = subprocess.run([executable, '--version'], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=5)
+        if result.returncode:
+            raise ValueError('GHDL was found but could not start. Check the matching Windows architecture and extract the complete release, including DLLs.\n' + result.stdout)
+        return {'ok': True, 'simulator': 'GHDL', 'language': 'VHDL-2008', 'version': result.stdout.splitlines()[0]}
+    except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+        return {'ok': False, 'simulator': 'GHDL', 'error': str(exc)}
 
 
 def ports(source, entity):
@@ -122,6 +152,7 @@ def parse_vcd(text):
 
 
 def simulate(data):
+    executable = find_ghdl()
     files = data.get('files', {})
     if not isinstance(files, dict) or not 1 <= len(files) <= MAX_FILES:
         raise ValueError('Supply 1–40 files')
@@ -136,7 +167,9 @@ def simulate(data):
     logs = []
     def run(args, cwd):
         try:
-            p = subprocess.run([GHDL, *args], cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=25)
+            p = subprocess.run([executable, *args], cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=25)
+        except OSError as exc:
+            raise ValueError('Could not launch GHDL. Verify GHDL_PATH or PATH, extract the complete GHDL installation (including DLLs), and restart the server. Details: ' + str(exc)) from exc
         except subprocess.TimeoutExpired as exc:
             logs.append((exc.stdout or b'').decode(errors='replace') if isinstance(exc.stdout, bytes) else (exc.stdout or ''))
             raise ValueError('Simulation exceeded 25 seconds. Shorten the duration or use accelerated board mode.\n' + '\n'.join(logs))
@@ -221,7 +254,7 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == '/api/example':
             return self.reply({'files': {p.name: p.read_text() for p in (ROOT/'examples/elevator').iterdir() if p.is_file()}})
         if self.path == '/api/health':
-            return self.reply({'ok': Path(GHDL).exists(), 'simulator': 'GHDL', 'language': 'VHDL-2008'})
+            return self.reply(simulator_status())
         super().do_GET()
 
     def do_POST(self):
@@ -246,5 +279,8 @@ if __name__ == '__main__':
     parser.add_argument('--port', type=int, default=8000)
     parser.add_argument('--host', default='127.0.0.1')
     args = parser.parse_args()
+    status = simulator_status()
+    if not status['ok']:
+        print('Simulator setup required: ' + status['error'], flush=True)
     print(f'Nexys Lab listening on {args.host}:{args.port}', flush=True)
     ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()

@@ -1,6 +1,8 @@
 """Integration tests executing the real simulator, including UI board bindings."""
 from pathlib import Path
 import unittest
+from unittest.mock import patch
+import tempfile
 import server
 
 
@@ -54,6 +56,25 @@ architecture rtl of switch_test is begin lights <= not switches; end;'''
     def test_path_rejected(self):
         with self.assertRaises(ValueError):
             server.simulate({'files':{'../outside.vhd':'abc'}})
+
+    def test_explicit_simulator_path_with_spaces(self):
+        with tempfile.TemporaryDirectory(prefix='ghdl path ') as directory:
+            executable = Path(directory)/'ghdl.exe'
+            executable.touch()
+            with patch.dict('os.environ', {'GHDL_PATH': str(executable)}):
+                self.assertEqual(server.find_ghdl(), str(executable.resolve()))
+
+    def test_invalid_explicit_path_is_actionable(self):
+        with patch.dict('os.environ', {'GHDL_PATH': '/nonexistent/ghdl.exe'}):
+            self.assertIn('GHDL_PATH', server.simulator_status()['error'])
+            self.assertFalse(server.simulator_status()['ok'])
+
+    def test_missing_simulator_is_actionable(self):
+        with patch.dict('os.environ', {'GHDL_PATH': ''}), patch('server.shutil.which', return_value=None), patch('server.Path.is_file', return_value=False):
+            status = server.simulator_status()
+            self.assertFalse(status['ok'])
+            self.assertIn('GHDL was not found', status['error'])
+            self.assertIn('PowerShell', status['error'])
 
 
 if __name__ == '__main__':

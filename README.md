@@ -16,6 +16,22 @@ On your own Debian/Ubuntu computer, install `python3` and `ghdl` using the syste
 
 This server runs user HDL using a native compiler. Use it for your own trusted projects. It is not a multi-user hosting service or a security sandbox; do not expose it to the public Internet. Runs use disposable build directories and a 25-second subprocess timeout. VHDL file I/O is not sandboxed.
 
+## Windows
+
+`[WinError 2] The system cannot find the file specified` when pressing Run usually means the GHDL executable cannot be found. Python alone is not enough to simulate VHDL.
+
+1. Install Python 3.10+ and download the appropriate Windows GHDL build from [official GHDL releases](https://github.com/ghdl/ghdl/releases). Choose a native Windows build matching your computer; a Linux archive cannot run on Windows. Extract the **entire** archive so its libraries and DLLs stay together.
+2. Add the folder containing `ghdl.exe` to your user `PATH`, then open a new PowerShell window. Check `ghdl --version`.
+3. Alternatively, set the executable explicitly in the same PowerShell window that starts the app (replace the example path with your actual extracted path):
+
+```powershell
+$env:GHDL_PATH = 'C:\Tools\ghdl\bin\ghdl.exe'
+& $env:GHDL_PATH --version
+py server.py
+```
+
+Run from the folder containing `server.py`. Open the local server on port 8000 in a browser. `GHDL_PATH` accepts either the executable or its containing directory and supports paths with spaces. The variable shown above lasts for this PowerShell session. Restart an already-running server after updating its environment. If GHDL is missing or cannot start, the app's Terminal and server startup now show a setup error instead of a raw WinError.
+
 ## Elevator
 
 1. Load the elevator example; choose **Interactive board**, top `elevator_top`.
