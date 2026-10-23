@@ -63,6 +63,8 @@ Select Testbench mode and the Vivado XSim engine to compile VHDL2008 with the in
 
 **Validation limit:** the XSim bridge's discovery, command validation, failure reporting and VCD handling have automated tests, but a real Vivado installation is not available in the cloud build machine. Its real execution must be verified using Test Vivado on the user's computer. Native Windows release tests use the bundled GHDL, not a claimed Vivado installation.
 
+On Windows, select the installation root (for example `F:\Xilinx\Vivado\2018.2`) or its `bin` folder. Nexys Lab uses the public `xvhdl.bat`, `xelab.bat` and `xsim.bat` launchers so Vivado can set its DLL search paths. Paths into `bin\unwrapped\win64.o` are redirected to those launchers. A missing-DLL dialog such as `libboost_filesystem.dll` can result from running an internal executable directly; use the launchers first. If the same error occurs through the launchers, check or repair the Vivado installation.
+
 Live Board waveforms are sampled outputs, exported as live-samples.vcd; they do not contain every internal or100MHz signal event. Use Testbench mode for full clock-resolution VCD analysis. Both engines' VCD timescales are normalized for the preview.
 
 ## Source setup and validation

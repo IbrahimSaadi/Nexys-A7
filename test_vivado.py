@@ -7,6 +7,53 @@ import vivado
 
 
 class VivadoTests(unittest.TestCase):
+    def test_windows_internal_paths_resolve_to_public_launchers(self):
+        with tempfile.TemporaryDirectory(prefix='Vivado tools ') as root:
+            folder=Path(root)/'bin'
+            internal=folder/'unwrapped'/'win64.o'
+            internal.mkdir(parents=True)
+            for tool in ('xvhdl','xelab','xsim'):
+                (folder/(tool+'.bat')).touch()
+                (folder/(tool+'.exe')).touch()
+                (internal/(tool+'.exe')).touch()
+            with patch('vivado.sys.platform','win32'):
+                for selected in (root,folder,internal,internal/'xvhdl.exe',folder/'xsim.bat'):
+                    with self.subTest(selected=selected):
+                        found=vivado.discover(str(selected))
+                        for tool,path in found.items():
+                            self.assertTrue(Path(path).samefile(folder/(tool+'.bat')))
+                with patch.dict(os.environ,{'VIVADO_PATH':str(internal),'XILINX_VIVADO':''}),patch('vivado.shutil.which',return_value=None):
+                    self.assertTrue(Path(vivado.discover()['xvhdl']).samefile(folder/'xvhdl.bat'))
+                with patch.dict(os.environ,{'VIVADO_PATH':'','XILINX_VIVADO':''}),patch('vivado.shutil.which',return_value=str(internal/'xvhdl.exe')):
+                    self.assertTrue(Path(vivado.discover()['xvhdl']).samefile(folder/'xvhdl.bat'))
+
+    def test_windows_missing_launchers_never_fall_back_to_executables(self):
+        with tempfile.TemporaryDirectory() as root:
+            folder=Path(root)/'bin'
+            internal=folder/'unwrapped'/'win64.o'
+            internal.mkdir(parents=True)
+            for tool in ('xvhdl','xelab','xsim'):
+                (folder/(tool+'.exe')).touch()
+                (internal/(tool+'.exe')).touch()
+            with patch('vivado.sys.platform','win32'):
+                for selected in (root,internal):
+                    with self.assertRaisesRegex(ValueError,'launchers were not found'):
+                        vivado.discover(str(selected))
+                self.assertFalse(vivado.status(str(internal))['available'])
+
+    @unittest.skipUnless(os.name=='nt','Windows batch execution regression')
+    def test_windows_wrapper_runs_with_spaces_and_sets_environment(self):
+        with tempfile.TemporaryDirectory(prefix='Vivado tools ') as root:
+            folder=Path(root)/'bin';folder.mkdir()
+            # A wrapper must actually execute, including its environment setup.
+            (folder/'check.cmd').write_text('@echo off\necho %NEXYS_WRAPPER_READY%\n',encoding='ascii')
+            for tool in ('xvhdl','xelab','xsim'):
+                (folder/(tool+'.bat')).write_text('@echo off\nset "NEXYS_WRAPPER_READY=WRAPPER_ENV_OK"\ncall "%~dp0check.cmd"\nexit /b 0\n',encoding='ascii')
+            for tool in vivado.discover(root).values():
+                code,output=vivado.execute(tool,['--2008','source with spaces.vhd'],root)
+                self.assertEqual(code,0,output)
+                self.assertIn('WRAPPER_ENV_OK',output)
+
     def test_installed_toolset_detection_and_partial_install(self):
         with tempfile.TemporaryDirectory(prefix='Vivado tools ') as root:
             folder=Path(root)/'bin';folder.mkdir()

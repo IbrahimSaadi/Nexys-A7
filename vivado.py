@@ -5,46 +5,62 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
+
+
+def _tool_folders(value):
+    """Accept an installation, bin, or internal executable without bypassing wrappers."""
+    path = Path(str(value).strip().strip('"'))
+    if path.suffix.lower() in ('.exe', '.bat', '.cmd'):
+        path = path.parent
+    # bin/unwrapped/win64.o contains internal binaries with DLL dependencies
+    # supplied by the public bin/*.bat launchers, not standalone applications.
+    for parent in (path, *path.parents):
+        if parent.name.lower() == 'unwrapped' and parent.parent.name.lower() == 'bin':
+            return [parent.parent]
+    return [path, path / 'bin']
 
 
 def discover(configured=None):
     candidates = []
     if configured:
-        p=Path(str(configured).strip('"'))
-        candidates += [p,p/'bin']
-    for name in ('VIVADO_PATH','XILINX_VIVADO'):
-        value = os.environ.get(name)
-        if value:
-            p=Path(value.strip('"'))
-            candidates += [p, p/'bin']
-    found=shutil.which('xvhdl') or shutil.which('xvhdl.bat')
-    if found:
-        candidates.append(Path(found).parent)
-    if os.name=='nt':
-        for root in (Path('C:/Xilinx/Vivado'),Path('C:/AMDDesignTools/Vivado'),Path('C:/AMD/Vivado')):
+        candidates += _tool_folders(configured)
+    else:
+        for name in ('VIVADO_PATH','XILINX_VIVADO'):
+            value = os.environ.get(name)
+            if value:
+                candidates += _tool_folders(value)
+        found=shutil.which('xvhdl') or shutil.which('xvhdl.bat')
+        if found:
+            candidates += _tool_folders(Path(found).parent)
+        if sys.platform=='win32':
+            for root in (Path('C:/Xilinx/Vivado'),Path('C:/AMDDesignTools/Vivado'),Path('C:/AMD/Vivado')):
+                if root.is_dir():
+                    candidates += [p/'bin' for p in sorted(root.iterdir(),reverse=True) if p.is_dir()]
+            root=Path('C:/AMDDesignTools')
             if root.is_dir():
-                candidates += [p/'bin' for p in sorted(root.iterdir(),reverse=True) if p.is_dir()]
-        root=Path('C:/AMDDesignTools')
-        if root.is_dir():
-            candidates += [p/'Vivado/bin' for p in sorted(root.iterdir(),reverse=True) if p.is_dir()]
-    for folder in (candidates[:2] if configured else candidates):
+                candidates += [p/'Vivado/bin' for p in sorted(root.iterdir(),reverse=True) if p.is_dir()]
+    for folder in candidates:
         tools={}
         for tool in ('xvhdl','xelab','xsim'):
-            for suffix in (('.bat','.exe','') if os.name=='nt' else ('','.exe')):
+            # On Windows only public launchers initialize Vivado's DLL paths.
+            # Never silently fall back to an internal .exe if a wrapper is absent.
+            for suffix in (('.bat','.cmd') if sys.platform=='win32' else ('',)):
                 path=folder/(tool+suffix)
                 if path.is_file():
                     tools[tool]=str(path.resolve())
                     break
         if len(tools)==3:
             return tools
-    raise ValueError('Vivado XSim was not found. Set VIVADO_PATH to your installed Vivado folder or bin folder, then restart Nexys Lab. Vivado is installed separately; live Board mode currently uses GHDL.')
+    raise ValueError('Vivado XSim launchers were not found. Select the Vivado installation folder (for example F:\\Xilinx\\Vivado\\2018.2) or its bin folder. Windows requires xvhdl.bat, xelab.bat and xsim.bat (or .cmd); internal unwrapped executables cannot run alone because they need Vivado DLL paths. If the launchers are missing, repair the Vivado installation. Live Board mode currently uses GHDL.')
 
 
 def status(configured=None):
     try:
-        discover(configured)
+        tools=discover(configured)
         return {'available':True,'engine':'Vivado XSim','mode':'testbench','validated':False,
+                'tools':tools,
                 'note':'Tools detected. Compile/run a testbench to validate this installation.'}
     except (ValueError,OSError) as exc:
         return {'available':False,'engine':'Vivado XSim','mode':'testbench','error':str(exc)}
