@@ -22,8 +22,15 @@ jobs:
           Expand-Archive dist/Nexys-Lab-Windows-x64.zip -DestinationPath portable
           Set-Location portable/Nexys-Lab
           $env:GHDL_PATH = (Resolve-Path runtime/ghdl/bin/ghdl.exe).Path
-          & runtime/python/python.exe -m unittest discover -v
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $output = & runtime/python/python.exe -m unittest discover -v 2>&1
+          $result = $LASTEXITCODE
+          $text = ($output | ForEach-Object { $_.ToString() }) -join "`n"
+          Write-Output $text
+          if ($result -ne 0) {
+            $detail = $text.Substring([Math]::Max(0, $text.Length - 14000)).Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            Write-Output "::error title=Bundled Windows integration tests::$detail"
+            exit $result
+          }
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
