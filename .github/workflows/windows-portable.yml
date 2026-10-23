@@ -27,7 +27,7 @@ jobs:
           $text = ($output | ForEach-Object { $_.ToString() }) -join "`n"
           Write-Output $text
           if ($result -ne 0) {
-            $detail = $text.Substring([Math]::Max(0, $text.Length - 14000)).Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            $detail = $text.Substring([Math]::Max(0, $text.Length - 3500)).Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
             Write-Output "::error title=Bundled Windows integration tests::$detail"
             exit $result
           }
