@@ -73,7 +73,11 @@ def command(tool,args):
         if any(re.search(r'[%!^&|<>"\r\n]',str(token)) for token in [tool,*args]):
             raise ValueError('Vivado batch paths/arguments cannot contain shell metacharacters. Use a plain installation path and integer/identifier generic values.')
         line='call "'+tool+'" '+' '.join('"'+str(arg)+'"' for arg in args)
-        return [os.environ.get('COMSPEC','cmd.exe'),'/d','/s','/c',line]
+        # A list would apply C-runtime escaping (\") to the command body.
+        # cmd.exe does not decode that syntax. Pass its validated, quoted
+        # command line directly; /s removes the outer pair around the body.
+        shell = subprocess.list2cmdline([os.environ.get('COMSPEC','cmd.exe')])
+        return shell+' /d /s /c "'+line+'"'
     return [tool,*args]
 
 

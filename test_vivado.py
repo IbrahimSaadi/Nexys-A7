@@ -46,13 +46,15 @@ class VivadoTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='Vivado tools ') as root:
             folder=Path(root)/'bin';folder.mkdir()
             # A wrapper must actually execute, including its environment setup.
-            (folder/'check.cmd').write_text('@echo off\necho %NEXYS_WRAPPER_READY%\n',encoding='ascii')
+            (folder/'check.cmd').write_text('@echo off\necho %NEXYS_WRAPPER_READY%\necho ARG1=%~1\necho ARG2=%~2\n',encoding='ascii')
             for tool in ('xvhdl','xelab','xsim'):
-                (folder/(tool+'.bat')).write_text('@echo off\nset "NEXYS_WRAPPER_READY=WRAPPER_ENV_OK"\ncall "%~dp0check.cmd"\nexit /b 0\n',encoding='ascii')
+                (folder/(tool+'.bat')).write_text('@echo off\nset "NEXYS_WRAPPER_READY=WRAPPER_ENV_OK"\ncall "%~dp0check.cmd" %*\nexit /b 0\n',encoding='ascii')
             for tool in vivado.discover(root).values():
                 code,output=vivado.execute(tool,['--2008','source with spaces.vhd'],root)
                 self.assertEqual(code,0,output)
                 self.assertIn('WRAPPER_ENV_OK',output)
+                self.assertIn('ARG1=--2008',output)
+                self.assertIn('ARG2=source with spaces.vhd',output)
 
     def test_installed_toolset_detection_and_partial_install(self):
         with tempfile.TemporaryDirectory(prefix='Vivado tools ') as root:
