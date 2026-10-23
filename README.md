@@ -10,11 +10,11 @@ The launcher opens a fresh browser tab and chooses a free port if an old server 
 
 ## Run your own project
 
-1. Export the current project if you need a backup. Choose **New project**.
+1. A fresh workspace starts empty. Export the current project if you need a backup, then choose **New project**. The optional **Load example project** action imports sample source files.
 2. Import your VHDL source files and XDC together. Entity discovery selects a likely top; choose the correct **Top entity** if necessary.
 3. Click **Inspect project / XDC**. Inputs/outputs appear in **Signals**, and physical connections appear in **Board pins**. No project-specific wrapper is required for supported top-port types.
 4. Set integer Generic values as JSON, for example `{"WIDTH":128}`, and inspect again. Configure any clock in the corresponding Signals row. Run restarts the design to apply clock/generic changes.
-5. Use **Original** timing and Run. Board switches/buttons drive matching XDC-bound pins; other inputs are editable in Signals. Outputs and resolved inout buses show their actual simulated values.
+5. Press **Run**. The app uses source-defined timing without automatic constant overrides. Board switches/buttons drive matching XDC-bound pins; other inputs are editable in Signals. Outputs and resolved inout buses show their actual simulated values.
 
 The uploaded counter design with `crt` and `ena_sw` can use top `main` directly: its XDC maps `crt` to SW0 and `ena_sw` to SW1 independently. The app does not need to know the names or behavior of that counter. The included elevator is now an example, not a requirement of the simulation engine.
 
@@ -49,9 +49,11 @@ The default board background uses the same manufacturer product photograph as th
 
 ## Clock time versus wall time
 
-**Original** is the default and never changes the source timing constants. Exact HDL time does not guarantee real-time CPU execution. A100MHz divider taking100million cycles can run much slower than one wall second. HDL time, active wall time and measured speed are shown separately.
+The interface always preserves source timing constants and configured clock periods. Exact HDL time does not guarantee real-time CPU execution. A 100 MHz divider taking 100 million cycles can run much slower than one wall second. HDL time, active wall time and measured speed are shown separately.
 
-**Interactive** is an explicitly selected elevator-demo preview only. It still executes the real source FSM in GHDL, but disposable copies scale three recognized elevator constants by10000: DIVISOR=10000, DEBOUNCE_CYCLES=200 and SCAN_DIV=5. Every override is shown. Editor/source files stay unchanged. The frontend paces toward one board/wall second per100microseconds of scaled HDL time. Unknown profiles are rejected; no arbitrary future project is silently accelerated. Use Original or a custom testbench for other designs.
+There is no application-specific timing selector. Previously saved or imported `interactive` timing settings are ignored by the interface; projects run with original timing. For quicker experiments, choose appropriate generics, clocks or explicit testbench stimulus in your project. The legacy scaled profile remains available only to direct API callers for compatibility.
+
+Board instructions use physical control names (BTNU, BTNC, SW0, LED0) and inspected signal names. The interface does not infer a floor, door, GO action or any other application meaning. Creating a new project clears the previous signal inspection, bindings, output history and control state.
 
 ## Testbench engines
 
