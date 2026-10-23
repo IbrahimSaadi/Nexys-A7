@@ -8,6 +8,21 @@ const inspector = NexysSignals.mount($('signal-inspector'), {
   onInput(name,bits) { rawInputs[name]=bits;save(); },
   onClock(name,config) {userClocks[name]=config;if(config)delete rawInputs[name];stopLive();$('input-status').textContent='Clock configuration changed. Press Run to apply.';save();}
 });
+const editorTools = NexysEditor.mount({editor:$('editor'),paint:$('syntax-highlight'),gutter:$('lines'),filename:()=>current,panel:$('problems'),badge:$('problems-tab'),onNavigate:goToProblem});
+function showLog(log,failed=false) { $('console').textContent=log; const items=editorTools.setLog(log,failed);if(failed)document.querySelector('[data-tab="problems"]').click();return items; }
+function goToProblem(problem) {
+  const leaf=String(problem.file).replace(/\\/g,'/').split('/').at(-1).toLowerCase();
+  const file=Object.keys(files).find(name=>name.toLowerCase()===leaf);
+  if(!file)return toast('This diagnostic refers to a generated or external file, not a project source.');
+  openFile(file);
+  const lines=files[file].split('\n'),line=Math.max(0,Math.min(lines.length-1,(problem.line||1)-1));
+  const start=lines.slice(0,line).reduce((n,text)=>n+text.length+1,0);
+  const column=Math.max(0,Math.min(lines[line].length,(problem.column||1)-1));
+  const editor=$('editor');editor.focus();editor.setSelectionRange(start+column,problem.column?Math.min(start+column+1,start+lines[line].length):start+lines[line].length);
+  const height=parseFloat(getComputedStyle(editor).lineHeight);editor.scrollTop=Math.max(0,line*height-editor.clientHeight/3);editor.scrollLeft=0;
+  if(column>60)editor.scrollLeft=(column-20)*parseFloat(getComputedStyle(editor).fontSize)*0.6;
+  updateLines();editorTools.sync();
+}
 function genericValues() {
   const value=JSON.parse($('project-generics').value||'{}');
   if (!value || Array.isArray(value) || typeof value!=='object') throw Error('Generic values must be a JSON object');
@@ -113,7 +128,7 @@ function stopLive() {
 async function startLive() {
   if (liveToken) { stopLive(); $('result').textContent = 'Stopped'; return; }
   if (busy) return;
-  busy = true; $('run').disabled = true; $('result').textContent = 'Compiling VHDL…';
+  busy = true; editorTools.clear(); $('run').disabled = true; $('result').textContent = 'Compiling VHDL…';
   const generation = ++liveGeneration;
   try {
     const info=await inspectProject();
@@ -121,7 +136,7 @@ async function startLive() {
     if (generation !== liveGeneration) { await liveRequest('stop',{session:data.session}); return; }
     liveToken = data.session; mapping = data.mapping; simNs = 0; paused = false; holds.clear(); wallStart = performance.now(); pausedWall = 0;
     $('input-status').textContent = 'Running · '+$('top').value+'. Drive inputs using the mapped board controls or Signals.';
-    $('pause').textContent = 'Ⅱ Pause'; $('run').textContent = '■ Stop simulation'; $('console').textContent = data.log;
+    $('pause').textContent = 'Ⅱ Pause'; $('run').textContent = '■ Stop simulation'; showLog(data.log);
     renderBoard(data); renderMapping(data); save();
     const pump = async () => {
       if (!liveToken || generation !== liveGeneration) return;
@@ -145,10 +160,10 @@ async function startLive() {
         // Never run ahead of wall time; slower simulation remains visibly slower.
         const wait = Math.max(0, sim*1000-activeWallMs(), 16-(performance.now()-begin));
         liveTimer = setTimeout(pump,wait);
-      } catch (error) { if (generation === liveGeneration) { stopLive(); $('console').textContent = error.message; $('result').textContent = 'Simulator stopped'; } }
+      } catch (error) { if (generation === liveGeneration) { stopLive(); showLog(error.message,true); $('result').textContent = 'Simulator stopped'; } }
     };
     pump();
-  } catch (error) { $('console').textContent = error.message; $('result').textContent = 'Compilation failed'; }
+  } catch (error) { showLog(error.message,true); $('result').textContent = 'Compilation failed'; }
   finally { busy = false; $('run').disabled = false; }
 }
 function toast(message) { $('toast').textContent = message; $('toast').classList.add('show'); setTimeout(() => $('toast').classList.remove('show'), 3000); }
@@ -156,7 +171,7 @@ function save() {
   try { localStorage.setItem(storageKey, JSON.stringify({files, current, top: $('top').value, mode: $('mode').value, timing:'original', mapping,mappingOverrides,rawInputs,userClocks,generics:genericValues(),engine:$('engine').value})); $('saved').textContent = '● Saved locally'; }
   catch { $('saved').textContent = 'Storage full · export your project'; }
 }
-function resetHistory() { stopLive(); commands = []; last = null; simNs = 0; renderBoard({}); renderWaves(null); updateProjectGuidance(); $('result').textContent = 'Session reset'; $('input-status').textContent=Object.keys(files).length ? ($('mode').value==='board'?'Press Run to simulate the selected top entity. Use mapped controls or Signals to drive inputs.':'Select a testbench entity and press Run. Stimuli come from the testbench.') : 'Add or import VHDL files to begin a new project.'; $('sim-time').textContent='0.000000 s'; $('wall-time').textContent='0.00 s'; $('sim-speed').textContent='—'; }
+function resetHistory() { stopLive(); editorTools.clear(); commands = []; last = null; simNs = 0; renderBoard({}); renderWaves(null); updateProjectGuidance(); $('result').textContent = 'Session reset'; $('input-status').textContent=Object.keys(files).length ? ($('mode').value==='board'?'Press Run to simulate the selected top entity. Use mapped controls or Signals to drive inputs.':'Select a testbench entity and press Run. Stimuli come from the testbench.') : 'Add or import VHDL files to begin a new project.'; $('sim-time').textContent='0.000000 s'; $('wall-time').textContent='0.00 s'; $('sim-speed').textContent='—'; }
 function fileList() {
   $('files').replaceChildren();
   for (const name of Object.keys(files)) {
@@ -169,11 +184,11 @@ function fileList() {
 }
 function openFile(name) { current = name; $('editor').value = files[name] || ''; $('filename').textContent = name || 'No file selected'; fileList(); updateLines(); save(); }
 function updateLines() {
-  const editor = $('editor'); $('lines').textContent = editor.value.split('\n').map((_, i) => i + 1).join('\n'); $('lines').scrollTop = editor.scrollTop;
+  const editor = $('editor'); editorTools.refresh();
   const before = editor.value.slice(0, editor.selectionStart).split('\n'); $('cursor').textContent = `Ln ${before.length}, Col ${before.at(-1).length + 1}`;
 }
 $('editor').addEventListener('input', () => { if (current) files[current] = $('editor').value;  clearInspection(); resetHistory(); updateLines(); save(); });
-$('editor').addEventListener('scroll', updateLines); $('editor').addEventListener('click', updateLines); $('editor').addEventListener('keyup', updateLines);
+$('editor').addEventListener('click', updateLines); $('editor').addEventListener('keyup', updateLines);
 $('editor').addEventListener('keydown', e => { if (e.key === 'Tab') { e.preventDefault(); const a = e.target.selectionStart, b = e.target.selectionEnd; e.target.setRangeText('    ', a, b, 'end'); e.target.dispatchEvent(new Event('input')); } });
 $('new-file').onclick = () => { const name = prompt('File name, for example counter.vhd'); if (!name) return; if (!/^[\w.-]+\.(vhd|vhdl|xdc|txt)$/i.test(name)) return toast('Use a .vhd, .vhdl, .xdc or .txt file name'); if (name in files) return toast('File already exists'); files[name] = ''; clearInspection();openFile(name); resetHistory();save(); };
 $('new-project').onclick = () => {if(Object.keys(files).length&&!confirm('Create an empty project? Export your current project first to keep a backup.'))return;newProject();};
@@ -216,7 +231,7 @@ function modeChanged(resetTop = true) { const board = $('mode').value === 'board
 $('mode').onchange = () => modeChanged(); $('top').onchange = () => { clearInspection();resetHistory(); mapping = {}; save(); };
 for (const button of document.querySelectorAll('[data-tab]')) button.onclick = () => {
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('selected', b === button));
-  for (const tab of ['console', 'waves', 'mapping','signals','pins']) $(tab).hidden = tab !== button.dataset.tab;
+  for (const tab of ['console', 'problems', 'waves', 'mapping','signals','pins']) $(tab).hidden = tab !== button.dataset.tab;
 };
 for (let i = 0; i < 16; i++) {
   const led = document.createElement('div'); led.className = 'led-unit'; led.innerHTML = `<div id="led-${i}" class="led"></div><span class="tiny">${i}</span>`; $('leds').append(led);
@@ -276,18 +291,18 @@ function renderWaves(wave) {
 }
 async function run(extra = []) {
   if ($('mode').value === 'board') return startLive();
-  if (busy) return; busy = true; $('run').disabled = true; $('run').textContent = '◌ Simulating…'; $('result').textContent = ($('engine').value==='vivado'?'Vivado XSim':'GHDL')+' running';
+  if (busy) return; busy = true; editorTools.clear(); $('run').disabled = true; $('run').textContent = '◌ Simulating…'; $('result').textContent = ($('engine').value==='vivado'?'Vivado XSim':'GHDL')+' running';
   const oldCommands = commands.slice(); commands.push(...extra);
   try {
     const res = await fetch('/api/run', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({files, top:$('top').value, mode:$('mode').value, duration:$('duration').value, fast:false, commands, mapping,generics:genericValues(),engine:$('engine').value,vivado_path:$('vivado-path').value})});
     const result = await res.json(); if (!res.ok || result.error) throw Error(result.error || res.statusText);
-    $('console').textContent = (result.overrides?.length ? 'ACCELERATED TIMING (temporary copies only):\n' + result.overrides.join('\n') + '\n\n' : '') + result.log;
+    showLog(result.log,!result.ok);
     $('result').textContent = result.ok ? '● Simulation passed' : '● ' + result.phase + ' failed'; $('result').style.color = result.ok ? '#b5ec69' : '#fa897f';
     last = result;
-    if (!result.ok) { commands = oldCommands; document.querySelector('[data-tab="console"]').click(); }
+    if (!result.ok) { commands = oldCommands; document.querySelector('[data-tab="problems"]').click(); }
     if (result.board) { mapping = result.mapping; renderBoard(result); renderMapping(result); }
     renderWaves(result.wave); save();
-  } catch (error) { commands = oldCommands; $('console').textContent = error.message; $('result').textContent = 'Simulation error'; document.querySelector('[data-tab="console"]').click(); }
+  } catch (error) { commands = oldCommands; showLog(error.message,true); $('result').textContent = 'Simulation error'; }
   finally { busy = false; $('run').disabled = false; $('run').innerHTML = '▶ Run simulation <kbd>Ctrl ↵</kbd>'; }
 }
 $('run').onclick = () => run(); $('pause').onclick = () => { if (!liveToken) return; if(!paused){pausedAt=performance.now();paused=true;}else{pausedWall+=performance.now()-pausedAt;paused=false;} $('pause').textContent = paused ? '▶ Resume' : 'Ⅱ Pause'; $('result').textContent = paused ? 'Paused' : 'Running'; }; $('reset').onclick = () => { resetHistory(); if ($('mode').value === 'board') run(); };
@@ -305,4 +320,4 @@ async function init() {
 }
 init();
 $('detect-engines').onclick=async()=>{try{localStorage.setItem('nexys-vivado-path',$('vivado-path').value);const data=await(await fetch('/api/engines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vivado_path:$('vivado-path').value})})).json();$('engine-status').textContent='GHDL: '+(data.ghdl.ok?'ready':'not found')+' · XSim: '+(data.vivado.available?'detected; run a testbench to validate':data.vivado.error);}catch(error){$('engine-status').textContent=error.message;}};
-$('test-vivado').onclick=async()=>{const button=$('test-vivado');button.disabled=true;$('engine-status').textContent='Compiling and running the installed XSim self-test…';try{const response=await fetch('/api/engines/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vivado_path:$('vivado-path').value})});const data=await response.json();$('console').textContent=data.log||data.error||'No test output';$('engine-status').textContent=data.ok?'Vivado XSim self-test passed on this computer.':'Vivado test failed. See Terminal for the exact diagnostic.';document.querySelector('[data-tab="console"]').click();}catch(error){$('engine-status').textContent=error.message;}finally{button.disabled=false;}};
+$('test-vivado').onclick=async()=>{const button=$('test-vivado');button.disabled=true;$('engine-status').textContent='Compiling and running the installed XSim self-test…';try{const response=await fetch('/api/engines/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vivado_path:$('vivado-path').value})});const data=await response.json();showLog(data.log||data.error||'No test output',!data.ok);$('engine-status').textContent=data.ok?'Vivado XSim self-test passed on this computer.':'Vivado test failed. See Terminal for the exact diagnostic.';document.querySelector('[data-tab="console"]').click();}catch(error){$('engine-status').textContent=error.message;}finally{button.disabled=false;}};

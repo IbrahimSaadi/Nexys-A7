@@ -20,6 +20,14 @@ The uploaded counter design with `crt` and `ena_sw` can use top `main` directly:
 
 Imports add files to the current project; New project avoids accidentally mixing old and new designs with duplicate entity names. Export project saves all project files and simulation settings as JSON. Source edits persist in browser localStorage, not server example files; they are not automatically committed to Git.
 
+## Editor and diagnostics
+
+VHDL sources are colored locally as you type: keywords, types, comments, numbers, strings and operators. The editor retains native text selection, copy/paste, tab insertion and scrolling. Non-VHDL files are shown as plain text; highlighting does not validate a design.
+
+Press Run to compile and simulate. **Problems** displays errors, warnings and notes from GHDL or Vivado XSim, with severity/category filters. Categories include syntax, names, types/sizes, libraries, binding, runtime, assertions, tool setup and general messages. Classification is inferred from diagnostic text, so unfamiliar messages may remain General. Terminal retains the exact simulator output.
+
+Click a file location in Problems to open its project source at the reported line/column. A colored line number marks the diagnostic; generated or external files are identified without opening unrelated files. Editing or resetting clears prior diagnostics so they are not presented as results for changed code. Errors are checked on Run, not continuously while typing. No errors reported is not a guarantee of functional correctness; use a testbench with assertions.
+
 ## General signal interface
 
 The live adapter supports `std_logic`, `std_ulogic`, `bit`, their vector forms, `signed` and `unsigned`, with scalar or resolved numeric/generic widths up to4096 bits. Ascending and nonzero vector bounds are supported. Integer generic defaults can use arithmetic and other integer generics. More complex records, custom/unconstrained types or package-derived bounds require a user testbench or a dedicated top-port adapter; the app reports this rather than guessing.
