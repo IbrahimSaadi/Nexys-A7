@@ -11,64 +11,263 @@ import time
 import uuid
 
 
-def harness(top, ps, mapping):
+def clock_config(ps, mapping, configured=None):
+    """Return validated clocks keyed by the entity's actual port spelling."""
+    names = {p['name'].lower(): p for p in ps}
+    result = {}
+    for p in ps:
+        if mapping[p['name']] == 'clock':
+            if p['direction'] != 'in' or p['vector']:
+                raise ValueError('Clock must be a scalar input std_logic: ' + p['name'])
+            result[p['name']] = {'period_ns': 10}
+    if configured is None:
+        return result
+    if not isinstance(configured, dict):
+        raise ValueError('clocks must be a dictionary of input names and period_ns')
+    for name, options in configured.items():
+        p = names.get(str(name).lower())
+        if not p or p['direction'] != 'in' or p['vector']:
+            raise ValueError('Clock must name a scalar input std_logic: ' + str(name))
+        if options is None:
+            result.pop(p['name'], None)
+            continue
+        period = options.get('period_ns') if isinstance(options, dict) else options
+        if isinstance(period,bool) or not isinstance(period,(int,float)):
+            raise ValueError('Clock period_ns must be a positive number')
+        half_fs=Decimal(str(period))*500000
+        if not half_fs.is_finite() or period<=0 or period>1000000000 or half_fs!=half_fs.to_integral_value() or half_fs<1:
+            raise ValueError('Clock period must be positive, at most 1 second, and a multiple of 2 fs (0.000002 ns)')
+        result[p['name']] = {'period_ns': period}
+    return result
+
+
+def port_base(port):
+    return re.match(r'\s*([a-zA-Z_]+)', port.get('sim_type', port['type']))[1].lower()
+
+
+def logic_expr(port, expression):
+    base = port_base(port)
+    if base == 'bit':
+        return 'to_stdulogic(' + expression + ')'
+    if base == 'bit_vector':
+        return 'to_stdlogicvector(' + expression + ')'
+    if port['vector']:
+        return 'std_logic_vector(' + expression + ')'
+    return expression
+
+
+def port_expr(port, expression):
+    base = port_base(port)
+    if base == 'bit':
+        return 'to_bit(' + expression + ')'
+    if base == 'bit_vector':
+        return 'to_bitvector(' + expression + ')'
+    if base in ('signed', 'unsigned', 'std_ulogic_vector'):
+        return base + '(' + expression + ')'
+    return expression
+
+
+def bit_value(value, port):
+    """Normalize a manual drive value without truncation or float precision loss."""
+    width = port['width']
+    if isinstance(value, bool):
+        value = int(value)
+    if isinstance(value, int):
+        if value < 0 and port_base(port) == 'signed' and value >= -(2**(width-1)):
+            value %= 2**width
+        if not 0 <= value < 2**width:
+            raise ValueError(f"Input {port['name']} must fit its {width}-bit unsigned pattern")
+        return format(value, f'0{width}b')
+    if isinstance(value, str):
+        text = value.strip().upper().replace('_', '')
+        if text.startswith('0X'):
+            try:
+                return bit_value(int(text, 16), port)
+            except ValueError as exc:
+                raise ValueError('Invalid hexadecimal drive for ' + port['name']) from exc
+        if text.startswith('0B'):
+            text = text[2:]
+        alphabet = r'[01]+' if port_base(port) in ('bit','bit_vector') else r'[01UXZWLH-]+'
+        if len(text) == width and re.fullmatch(alphabet, text):
+            return text
+    raise ValueError(f"Input {port['name']} requires exactly {width} std_logic bits, an integer, or hexadecimal text")
+
+
+def mapped_value(port, target, switches, buttons):
+    """Resolve simple board controls; all other signals remain manually drivable."""
+    width = port['width']
+    target = str(target)
+    if target.lower() == 'sw':
+        return format(switches % 2**width, f'0{width}b')
+    match = re.fullmatch(r'sw\[(\d+)\]', target, re.I)
+    if match:
+        bit = int(match[1])
+        if not 0 <= bit < 16:
+            raise ValueError('Switch index must be 0–15')
+        return format((switches >> bit) & 1, f'0{width}b')
+    if target in ('btnC', 'btnU', 'btnL', 'btnR', 'btnD'):
+        return ('1' if target in buttons else '0') * width
+    if target == 'cpu_resetn':
+        return '1' * width
+    return ('Z' if port['direction'] == 'inout' and port_base(port) not in ('bit','bit_vector') else '0') * width
+
+
+def port_indices(port):
+    if not port['vector']:
+        return [None]
+    left, right = port.get('left'), port.get('right')
+    if left is None or right is None:
+        match = re.search(r'\(\s*(\d+)\s+(?:downto|to)\s*(\d+)\s*\)', port.get('sim_type', port['type']), re.I)
+        if not match:
+            raise ValueError('Cannot determine vector indices for ' + port['name'])
+        left, right = int(match[1]), int(match[2])
+    step = -1 if left > right else 1
+    return list(range(left, right + step, step))
+
+
+def normalize_bindings(ports, bindings):
+    if bindings is None:
+        bindings = {}
+    if not isinstance(bindings, dict):
+        raise ValueError('board_bindings must map port names to ordered bit records')
+    by_name = {p['name'].lower(): p for p in ports}
+    result = {p['name']: [] for p in ports}
+    for name, records in bindings.items():
+        port = by_name.get(str(name).lower())
+        if not port or not isinstance(records, list):
+            raise ValueError('Invalid board binding port: ' + str(name))
+        indices, seen = set(port_indices(port)), set()
+        for record in records:
+            if not isinstance(record, dict):
+                raise ValueError('Board binding records must be objects')
+            index = record.get('index')
+            if index not in indices or isinstance(index, bool) or index in seen:
+                raise ValueError('Invalid or duplicate board binding index for ' + port['name'])
+            signal = record.get('signal')
+            if signal is not None and (not isinstance(signal, str) or len(signal) > 100):
+                raise ValueError('Invalid board signal name')
+            result[port['name']].append({**record, 'index': index, 'signal': signal})
+            seen.add(index)
+    return result
+
+
+def scalar_logic_expr(port, index):
+    expression = 'io_' + port['name'] + (f'({index})' if index is not None else '')
+    return 'to_stdulogic(' + expression + ')' if port_base(port) in ('bit', 'bit_vector') else expression
+
+
+def display_sources(ports, mapping, board_bindings):
+    """Resolve physical segment/anode bits, independent of port spelling/order."""
+    result = {'segment': {}, 'an': {}}
+    for port in ports:
+        if port['direction'] == 'in':
+            continue
+        target = mapping.get(port['name'])
+        if target in result and port['vector'] and port['width'] == (7 if target == 'segment' else 8):
+            # Preserve old bus mapping: leftmost port element is the high bit.
+            for bit, index in enumerate(reversed(port_indices(port))):
+                result[target][bit] = scalar_logic_expr(port, index)
+    for port in ports:
+        if port['direction'] == 'in':
+            continue
+        for record in board_bindings.get(port['name'], []):
+            match = re.fullmatch(r'(segment|an)\[(\d+)\]', record.get('signal') or '', re.I)
+            if match:
+                group, bit = match[1].lower(), int(match[2])
+                if bit >= (7 if group == 'segment' else 8):
+                    raise ValueError('Invalid physical display bit: ' + record['signal'])
+                result[group][bit] = scalar_logic_expr(port, record['index'])
+    return result
+
+
+def harness(top, ps, mapping, clocks=None, initial_values=None, generics=None, board_bindings=None):
     declarations, bindings, clock = [], [], []
-    inputs = []
-    outputs = []
+    inputs, outputs = [], []
+    clocks = clock_config(ps, mapping) if clocks is None else clocks
+    board_bindings = normalize_bindings(ps, board_bindings)
+    display = display_sources(ps, mapping, board_bindings)
+    initial_values = initial_values or {}
+    generic_bindings = []
+    for name, value in (generics or {}).items():
+        if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', str(name)):
+            raise ValueError('Invalid generic name')
+        if isinstance(value, bool):
+            literal = str(value).lower()
+        elif isinstance(value, int):
+            literal = str(value)
+        elif isinstance(value, str) and re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*|\"[^\"\n]*\"|\'[01]\'', value):
+            literal = value
+        else:
+            raise ValueError('Generic values must be integers, booleans or explicit VHDL string/identifier literals')
+        generic_bindings.append(f'{name} => {literal}')
+    generic_clause = (' generic map (' + ', '.join(generic_bindings) + ')') if generic_bindings else ''
     for p in ps:
         n = 'io_' + p['name']
-        declarations.append(f"signal {n}: {p['type']} := " + ("(others=>'0');" if p['vector'] else "'0';"))
+        initial = 'Z' if p['direction'] == 'inout' and port_base(p) not in ('bit','bit_vector') else '0'
+        declarations.append(f"signal {n}: {p.get('sim_type', p['type'])} := " + (f"(others=>'{initial}');" if p['vector'] else f"'{initial}';"))
         bindings.append(f"{p['name']} => {n}")
-        target = mapping[p['name']]
-        if p['direction'] == 'in':
-            if target == 'clock':
-                if p['vector']:
-                    raise ValueError('Clock must be a scalar std_logic')
-                clock.append(f'{n} <= not {n} after 5 ns;')
-            else:
-                inputs.append((p, target))
-        else:
+        if p['name'] in clocks:
+            half_fs=int(Decimal(str(clocks[p['name']]['period_ns']))*500000)
+            clock.append(f"{n} <= not {n} after {half_fs} fs;")
+        elif p['direction'] in ('in', 'inout'):
+            inputs.append(p)
+        if p['direction'] != 'in':
             outputs.append(p)
-    code = ['library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all; use std.textio.all;',
+    code = ['library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all; use ieee.std_logic_textio.all; use std.textio.all;',
             'entity lab_live_tb is end;', 'architecture sim of lab_live_tb is', *declarations,
             "type digits_t is array(0 to 7) of std_logic_vector(6 downto 0);",
-            "signal digits: digits_t := (others=>(others=>'1'));", 'begin',
-            f"dut: entity work.{top} port map ({', '.join(bindings)});", *clock]
-    seg = next((p for p in ps if mapping[p['name']] == 'segment' and p['width'] == 7 and p['vector']), None)
-    an = next((p for p in ps if mapping[p['name']] == 'an' and p['width'] == 8 and p['vector']), None)
-    if seg and an:
-        code += [f"process begin wait on io_{seg['name']}, io_{an['name']}; wait for 0 ns; wait for 0 ns;",
-                 f"for i in 0 to 7 loop if io_{an['name']}(i)='0' then digits(i) <= io_{seg['name']}; end if; end loop; end process;"]
-    code += ['process', 'variable ln: line;', 'variable sw, mask, duration_ns: integer;',
-             'begin']
-    # Initialize only the mapped physical reset. No timing constants are patched.
-    for p, target in inputs:
-        if target == 'btnC':
-            code.append(f"io_{p['name']} <= " + ("(others=>'1');" if p['vector'] else "'1';"))
+            "signal digits: digits_t := (others=>(others=>'1'));",
+            "signal lab_segments: std_logic_vector(6 downto 0) := (others=>'1');",
+            "signal lab_anodes: std_logic_vector(7 downto 0) := (others=>'1');", 'begin',
+            f"dut: entity work.{top}{generic_clause} port map ({', '.join(bindings)});", *clock]
+    for group, signal_name, width in [('segment', 'lab_segments', 7), ('an', 'lab_anodes', 8)]:
+        for bit in range(width):
+            expression = display[group].get(bit, "'1'")
+            code.append(f'{signal_name}({bit}) <= {expression};')
+    if display['segment'] and display['an']:
+        code += ["process begin wait on lab_segments, lab_anodes; wait for 0 ns; wait for 0 ns;",
+                 "for i in 0 to 7 loop if lab_anodes(i)='0' then digits(i) <= lab_segments; end if; end loop; end process;"]
+    code += ['process', 'variable ln: line;', 'variable duration_ns: integer;']
+    for p in inputs:
+        drive_type = f"std_logic_vector({p['width']-1} downto 0)" if p['vector'] else 'std_logic'
+        code.append(f"variable drive_{p['name']}: {drive_type};")
+    code.append('begin')
+    for p in inputs:
+        bits = initial_values.get(p['name'])
+        if bits is not None:
+            literal = '"' + bits + '"' if p['vector'] else "'" + bits + "'"
+            code.append(f"io_{p['name']} <= {literal};")
+    # Reset only physical reset bindings, respecting each pin's active level.
+    reset_ports=[]
+    for p in inputs:
+        bits=list(initial_values.get(p['name'],'0'*p['width']))
+        changed=False
+        if mapping[p['name']] == 'btnC':
+            bits=['1']*p['width'];changed=True
+        elif mapping[p['name']] == 'cpu_resetn':
+            bits=['0']*p['width'];changed=True
+        positions={index:position for position,index in enumerate(port_indices(p))}
+        for record in board_bindings.get(p['name'],[]):
+            if record['signal'] in ('btnC','cpu_resetn'):
+                bits[positions[record['index']]]='1' if record['signal']=='btnC' else '0';changed=True
+        if changed:
+            reset_ports.append(p)
+            value=''.join(bits)
+            code.append(f"io_{p['name']} <= " + ('"'+value+'";' if p['vector'] else "'"+value+"';"))
     code += ['wait for 100 ns;']
-    for p, target in inputs:
-        if target == 'btnC':
-            code.append(f"io_{p['name']} <= " + ("(others=>'0');" if p['vector'] else "'0';"))
+    for p in reset_ports:
+        bits = initial_values.get(p['name'], ('1' if mapping[p['name']]=='cpu_resetn' else '0') * p['width'])
+        literal = '"' + bits + '"' if p['vector'] else "'" + bits + "'"
+        code.append(f"io_{p['name']} <= {literal};")
     code += ['wait for 100 ns;', 'loop', 'write(ln, string\'("LAB_FRAME ")); write(ln, now, unit=>ns);']
     for p in outputs:
-        code.append(f"write(ln, string' (\" \")); write(ln, to_string(io_{p['name']}));")
+        code.append(f"write(ln, string' (\" \")); write(ln, to_string({logic_expr(p, 'io_' + p['name'])}));")
     code += ["for i in 0 to 7 loop write(ln, string' (\" \")); write(ln, to_string(digits(i))); end loop;",
              'writeline(output, ln); flush(output);',
              'if endfile(input) then std.env.finish; end if;',
-             'readline(input, ln); read(ln, sw); read(ln, mask); read(ln, duration_ns);']
-    buttons = ['btnC', 'btnU', 'btnL', 'btnR', 'btnD']
-    for p, target in inputs:
-        n = 'io_' + p['name']
-        if target == 'sw':
-            if p['vector']:
-                code.append(f'{n} <= std_logic_vector(to_unsigned(sw mod {2**min(p["width"],16)}, {p["width"]}));')
-            else:
-                code.append(f"if sw mod 2=1 then {n}<='1'; else {n}<='0'; end if;")
-        elif target in buttons:
-            bit = buttons.index(target)
-            one = "(others=>'1')" if p['vector'] else "'1'"
-            zero = "(others=>'0')" if p['vector'] else "'0'"
-            code.append(f'if (mask / {2**bit}) mod 2=1 then {n}<={one}; else {n}<={zero}; end if;')
+             'readline(input, ln); read(ln, duration_ns);']
+    for p in inputs:
+        code.append(f"read(ln, drive_{p['name']}); io_{p['name']} <= {port_expr(p, 'drive_' + p['name'])};")
     code += ['wait for duration_ns * 1 ns;', 'end loop;', 'end process;', 'end;']
     return '\n'.join(code), outputs
 
@@ -116,14 +315,23 @@ class Session:
                 (Path(self.temp.name)/name).write_text(text, encoding='utf-8')
             if self.timing == 'interactive' and any(applied.get(name) != 1 for name in expected):
                 raise ValueError('Interactive timing requires the standard elevator constants (DIVISOR=100000000, DEBOUNCE_CYCLES=2000000, SCAN_DIV=50000). Select Original timing for this design.')
-            self.ports = server.ports('\n'.join(files.values()), top)
+            generics = data.get('generics') or {}
+            if not isinstance(generics, dict):
+                raise ValueError('generics must be a dictionary')
+            self.ports = server.ports('\n'.join(files.values()), top, generics) if generics else server.ports('\n'.join(files.values()), top)
             if not self.ports:
                 raise ValueError('Board mode needs top-level ports. Use Testbench mode for a testbench.')
             self.mapping = {p['name']: data.get('mapping', {}).get(p['name'], server.auto_map(p)) for p in self.ports}
+            self.board_bindings = normalize_bindings(self.ports, data.get('board_bindings'))
+            self.clocks = clock_config(self.ports, self.mapping, data.get('clocks'))
+            self.drive_ports = [p for p in self.ports if p['direction'] in ('in', 'inout') and p['name'] not in self.clocks]
+            self.raw_inputs = {}
+            self.set_inputs(data.get('inputs', {}))
+            self.input_values = self.resolve_inputs(0, [])
             executable = server.find_ghdl()
             pending = [name for name in files if name.lower().endswith(('.vhd', '.vhdl'))]
             def compile(args):
-                r = subprocess.run([executable, *args], cwd=self.temp.name, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=25)
+                r = subprocess.run([executable, *args], cwd=self.temp.name, text=True,encoding='utf-8',errors='replace', stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=25)
                 return r.returncode, '$ ghdl ' + ' '.join(args) + '\n' + r.stdout
             while pending:
                 remaining, errors = [], []
@@ -137,7 +345,7 @@ class Session:
                 if len(remaining) == len(pending):
                     raise ValueError('\n'.join(errors))
                 pending = remaining
-            source, self.outputs = harness(top, self.ports, self.mapping)
+            source, self.outputs = harness(top, self.ports, self.mapping, self.clocks, self.input_values, generics, self.board_bindings)
             (Path(self.temp.name)/'lab_live_tb.vhd').write_text(source)
             for args in (['-a', '--std=08', 'lab_live_tb.vhd'], ['-e', '--std=08', 'lab_live_tb']):
                 status, log = compile(args)
@@ -146,7 +354,7 @@ class Session:
                     raise ValueError(log)
             self.process = subprocess.Popen([executable, '-r', '--std=08', 'lab_live_tb', '--assert-level=error'],
                 cwd=self.temp.name, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1)
+                text=True,encoding='utf-8',errors='replace', bufsize=1)
             threading.Thread(target=self.reader, daemon=True).start()
             self.initial = self.frame()
         except Exception:
@@ -183,14 +391,61 @@ class Session:
         self.history = self.history[-4000:]
         digits = parts[3+len(self.outputs):3+len(self.outputs)+8]
         sim_ns = (stamp-200000000)/1000000
-        heading = ('CONTINUOUS · ORIGINAL VHDL · 100 MHz / 10 ns · NO TIMING OVERRIDES' if self.timing == 'original' else
+        clock_note = ', '.join(f"{name}={options['period_ns']} ns ({1000/options['period_ns']:g} MHz)" for name, options in self.clocks.items()) or 'none configured'
+        heading = ('CONTINUOUS · ORIGINAL VHDL · NO TIMING OVERRIDES' if self.timing == 'original' else
                    'INTERACTIVE PREVIEW · COUNTERS SCALED 1:10000 IN TEMPORARY COPIES\n' + '\n'.join(self.overrides))
+        heading += '\nCLOCKS: ' + clock_note
         return {'ok': True, 'board': True, 'ports': self.ports, 'mapping': self.mapping,
                 'digits': digits, 'sim_ns': (stamp-200000000)/1000000,
                 'board_ns': sim_ns*self.time_scale, 'timing': self.timing, 'time_scale': self.time_scale,
                 'overrides': self.overrides, 'inputs': self.inputs.copy(),
+                'input_values': self.input_values.copy(), 'port_inputs': self.input_values.copy(),
+                'manual_inputs': self.raw_inputs.copy(), 'clocks': self.clocks,
+                'board_bindings': self.board_bindings, 'board_values': self.board_values(values),
                 'wave': {'values':values, 'events': self.history[:], 'end':stamp, 'truncated':False},
                 'log': heading + '\n' + '\n'.join(self.logs)}
+
+    def board_values(self, observed):
+        result = {}
+        # Physical inputs reflect their external drive; output/inout uses the
+        # actual resolved DUT signal, not the external inout drive value.
+        ordered = sorted(self.ports, key=lambda p: p['direction'] != 'in')
+        for port in ordered:
+            if port['direction'] == 'in':
+                bits = self.input_values.get(port['name'])
+            else:
+                bits = observed.get('lab_board_tb.io_' + port['name'].lower())
+            if bits is None:
+                continue
+            positions = {index: position for position, index in enumerate(port_indices(port))}
+            for record in self.board_bindings.get(port['name'], []):
+                signal = record.get('signal')
+                if not signal:
+                    continue
+                value = bits[positions[record['index']]]
+                if signal in result and result[signal] != value:
+                    result[signal] = 'X'
+                else:
+                    result[signal] = value
+        return result
+
+    def set_inputs(self, values):
+        if not isinstance(values, dict):
+            raise ValueError('inputs must be a dictionary of input port names and drive values')
+        by_name = {p['name'].lower(): p for p in self.drive_ports}
+        updated = self.raw_inputs.copy()
+        for name, value in values.items():
+            p = by_name.get(str(name).lower())
+            if not p:
+                raise ValueError('Cannot drive unknown, output-only, or clock port: ' + str(name))
+            if value is None:
+                updated.pop(p['name'], None)
+            else:
+                updated[p['name']] = bit_value(value, p)
+        self.raw_inputs = updated
+
+    def resolve_inputs(self, switches, buttons):
+        return {p['name']: self.raw_inputs.get(p['name'], mapped_value(p, self.mapping[p['name']], switches, buttons)) for p in self.drive_ports}
 
     def advance(self, data):
         with self.lock:
@@ -202,9 +457,13 @@ class Session:
             duration = int(data.get('ns', 1000000))
             if not 0 <= switches <= 65535 or not 10 <= duration <= 10000000 or duration % 10:
                 raise ValueError('Invalid inputs or time interval (10 ns–10 ms, multiple of 10 ns)')
-            mask = sum(1 << i for i, b in enumerate(['btnC','btnU','btnL','btnR','btnD']) if b in buttons)
+            if not isinstance(buttons, list) or any(b not in ('btnC','btnU','btnL','btnR','btnD') for b in buttons):
+                raise ValueError('buttons must be a list of board button names')
+            self.set_inputs(data.get('inputs', {}))
             self.inputs = {'sw': switches, 'buttons': list(buttons)}
-            self.process.stdin.write(f'{switches} {mask} {duration}\n')
+            self.input_values = self.resolve_inputs(switches, buttons)
+            tokens = [str(duration), *[self.input_values[p['name']] for p in self.drive_ports]]
+            self.process.stdin.write(' '.join(tokens) + '\n')
             self.process.stdin.flush()
             return self.frame()
 

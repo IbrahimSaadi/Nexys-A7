@@ -73,8 +73,10 @@ def build(cache, output):
     with tempfile.TemporaryDirectory(prefix='nexys-package-') as temp:
         stage = Path(temp)/'Nexys-Lab'
         stage.mkdir()
-        for name in ('server.py', 'live.py', 'test_lab.py', 'README.md', 'Start-Nexys-Lab.cmd'):
+        for name in ('server.py', 'live.py', 'board.py', 'vivado.py', 'README.md', 'Start-Nexys-Lab.cmd'):
             shutil.copy2(ROOT/name, stage/name)
+        for path in ROOT.glob('test_*.py'):
+            shutil.copy2(path,stage/path.name)
         for name in ('web', 'examples', 'third_party', 'docs'):
             shutil.copytree(ROOT/name, stage/name)
         extract(cache/'ghdl.zip', stage/'runtime/ghdl')

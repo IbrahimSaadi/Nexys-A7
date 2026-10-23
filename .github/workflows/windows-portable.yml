@@ -22,7 +22,7 @@ jobs:
           Expand-Archive dist/Nexys-Lab-Windows-x64.zip -DestinationPath portable
           Set-Location portable/Nexys-Lab
           $env:GHDL_PATH = (Resolve-Path runtime/ghdl/bin/ghdl.exe).Path
-          & runtime/python/python.exe -m unittest -v test_lab.py
+          & runtime/python/python.exe -m unittest discover -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/setup-node@v4
         with:
@@ -47,6 +47,8 @@ jobs:
             $env:NEXYS_LAB_URL = 'http://127.0.0.1:8011'
             node scripts/check_interaction.cjs
             if ($LASTEXITCODE -ne 0) { throw 'Switch/GO browser regression failed' }
+            node scripts/check_generic.cjs
+            if ($LASTEXITCODE -ne 0) { throw 'Generic project browser regression failed' }
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
           }

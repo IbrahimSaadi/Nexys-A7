@@ -2,6 +2,49 @@
 const $ = id => document.getElementById(id);
 let files = {}, current = '', commands = [], mapping = {}, sw = 0, busy = false, last = null;
 const storageKey = 'nexys-lab-project-v1';
+let projectInfo = null, rawInputs = {}, userClocks = {}, mappingOverrides = {}, pinCatalog = null, catalogView = null;
+function xdcControls(name){return(projectInfo?.bindings.mapping[name]||[]).some(b=>b.source==='xdc')||(projectInfo?.bindings.warnings||[]).some(w=>w.toLowerCase().includes(name.toLowerCase())&&/conflict|unknown pin|unresolved/i.test(w));}
+const inspector = NexysSignals.mount($('signal-inspector'), {
+  onInput(name,bits) { rawInputs[name]=bits;save(); },
+  onClock(name,config) {userClocks[name]=config;if(config)delete rawInputs[name];stopLive();$('input-status').textContent='Clock configuration changed. Press Run to apply.';save();}
+});
+function genericValues() {
+  const value=JSON.parse($('project-generics').value||'{}');
+  if (!value || Array.isArray(value) || typeof value!=='object') throw Error('Generic values must be a JSON object');
+  return value;
+}
+async function inspectProject() {
+  const response=await fetch('/api/inspect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({files,top:$('top').value,generics:genericValues()})});
+  const data=await response.json();if(!response.ok||data.error) throw Error(data.error||'Inspection failed');
+  projectInfo=data;$('top').value=data.top;mapping={...data.mapping};for(const[name,target]of Object.entries(mappingOverrides))if(name in mapping&&!xdcControls(name))mapping[name]=target;
+  $('entity-options').replaceChildren();for(const name of data.entities){const option=document.createElement('option');option.value=name;$('entity-options').append(option);}
+  const preview={ports:data.ports,mapping,clocks:{...data.clocks,...userClocks},input_values:{},wave:{values:{}}};
+  inspector.update(preview);inspector.setInputs(rawInputs);inspector.setClocks(preview.clocks);renderMapping(preview);
+  if(pinCatalog && NexysSignals.renderCatalog) catalogView=NexysSignals.renderCatalog($('pin-catalog'),pinCatalog,data.bindings,preview);
+  if(data.bindings.warnings.length) $('console').textContent='XDC inspection:\n'+data.bindings.warnings.join('\n');
+  save();return data;
+}
+function physicalInputs(buttons) {
+  const result={...rawInputs};
+  const clocks={...projectInfo?.clocks,...userClocks};for(const[name,config]of Object.entries(clocks))if(config)delete result[name];
+  for(const p of projectInfo?.ports||[]) {
+    if(!['in','inout'].includes(p.direction)||Object.hasOwn(rawInputs,p.name))continue;
+    const bits=(last?.input_values?.[p.name]||((p.direction==='inout'?'Z':'0').repeat(p.width))).split('');let assigned=false;
+    for(const binding of projectInfo.bindings.mapping[p.name]||[]) {
+      const signal=binding.signal;let value;
+      const match=/^sw\[(\d+)\]$/.exec(signal||'');
+      if(match)value=String((sw>>Number(match[1]))&1);
+      else if(['btnC','btnU','btnL','btnR','btnD'].includes(signal))value=buttons.includes(signal)?'1':'0';
+      else if(signal==='cpu_resetn')value=buttons.includes('cpu_resetn')?'0':'1';
+      if(value!==undefined){const pos=p.vector?(p.left<=p.right?binding.index-p.left:p.left-binding.index):0;bits[pos]=value;assigned=true;}
+    }
+    if(assigned)result[p.name]=bits.join('');
+  }
+  return result;
+}
+function releasePhysicalOverride(signal) {
+  for(const [name,bits] of Object.entries(projectInfo?.bindings.mapping||{})) if(bits.some(b=>b.signal===signal || (signal==='sw'&&b.signal?.startsWith('sw['))))delete rawInputs[name];
+}
 const photoKey = 'nexys-lab-board-photo-v1';
 function setBoardPhoto(source) {
   $('pcb-art').src = source || 'board.svg';
@@ -49,7 +92,8 @@ async function startLive() {
   busy = true; $('run').disabled = true; $('result').textContent = 'Compiling VHDL…';
   const generation = ++liveGeneration;
   try {
-    const data = await liveRequest('start', {files, top:$('top').value, mapping, timing:$('timing').value});
+    const info=await inspectProject();
+    const data = await liveRequest('start', {files, top:$('top').value, mapping, timing:$('timing').value, generics:genericValues(),clocks:{...info.clocks,...userClocks},inputs:physicalInputs([]),board_bindings:info.bindings.mapping});
     if (generation !== liveGeneration) { await liveRequest('stop',{session:data.session}); return; }
     liveToken = data.session; mapping = data.mapping; simNs = 0; paused = false; holds.clear(); wallStart = performance.now(); pausedWall = 0; timeScale = data.time_scale;
     $('input-status').textContent = timeScale > 1 ? 'Running · interactive preview. Choose a floor and press GO.' : 'Running · original timing. A one-second HDL timer may take minutes.';
@@ -62,13 +106,13 @@ async function startLive() {
         const begin = performance.now();
         const presses = [...holds].filter(([,press])=>press.remainingNs > 0);
         const buttons = presses.map(([name])=>name);
-        const quantum = timeScale > 1 ? 5000 : 1000000;
-        const frame = await liveRequest('advance', {session:liveToken, sw, buttons, ns:quantum});
+        const quantum = timeScale > 1 ? 5000 : Number($('frame-quantum').value);
+        const frame = await liveRequest('advance', {session:liveToken, sw, buttons:buttons.filter(b=>b!=='cpu_resetn'), ns:quantum,inputs:physicalInputs(buttons)});
         if (generation !== liveGeneration) return;
         simNs = frame.sim_ns; last = frame;
         for (const [name,press] of presses) if (holds.get(name) === press) { press.remainingNs-=quantum; if(press.remainingNs<=0) holds.delete(name); }
         if (frame.inputs?.buttons.includes('btnU')) $('input-status').textContent = 'GO delivered to VHDL · requested switch value '+frame.inputs.sw+'. Watch the live display and door output.';
-        renderBoard(frame); renderWaves(frame.wave);
+        renderBoard(frame); renderWaves(frame.wave);inspector.update(frame);catalogView?.update?.(frame);
         const wall = activeWallMs()/1000, sim = simNs/1e9, board = frame.board_ns/1e9;
         $('sim-time').textContent = sim.toFixed(6) + ' s'; $('wall-time').textContent = wall.toFixed(2)+' s';
         $('sim-speed').textContent = timeScale>1 ? board.toFixed(2)+' s · '+(board/Math.max(wall,.001)).toFixed(2)+'× preview' : (sim/Math.max(wall,0.001)).toFixed(4)+'× · 1 HDL s ≈ '+Math.round(wall/Math.max(sim,1e-9))+' wall s';
@@ -85,7 +129,7 @@ async function startLive() {
 }
 function toast(message) { $('toast').textContent = message; $('toast').classList.add('show'); setTimeout(() => $('toast').classList.remove('show'), 3000); }
 function save() {
-  try { localStorage.setItem(storageKey, JSON.stringify({files, current, top: $('top').value, mode: $('mode').value, timing:$('timing').value, mapping})); $('saved').textContent = '● Saved locally'; }
+  try { localStorage.setItem(storageKey, JSON.stringify({files, current, top: $('top').value, mode: $('mode').value, timing:$('timing').value, mapping,mappingOverrides,rawInputs,userClocks,generics:genericValues(),engine:$('engine').value})); $('saved').textContent = '● Saved locally'; }
   catch { $('saved').textContent = 'Storage full · export your project'; }
 }
 function resetHistory() { stopLive(); commands = []; last = null; simNs = 0; renderBoard({}); $('result').textContent = 'Session reset'; $('input-status').textContent='Press Run, choose a floor, then press GO.'; $('sim-time').textContent='0.000000 s'; $('wall-time').textContent='0.00 s'; $('sim-speed').textContent='—'; }
@@ -108,9 +152,12 @@ $('editor').addEventListener('input', () => { if (current) files[current] = $('e
 $('editor').addEventListener('scroll', updateLines); $('editor').addEventListener('click', updateLines); $('editor').addEventListener('keyup', updateLines);
 $('editor').addEventListener('keydown', e => { if (e.key === 'Tab') { e.preventDefault(); const a = e.target.selectionStart, b = e.target.selectionEnd; e.target.setRangeText('    ', a, b, 'end'); e.target.dispatchEvent(new Event('input')); } });
 $('new-file').onclick = () => { const name = prompt('File name, for example counter.vhd'); if (!name) return; if (!/^[\w.-]+\.(vhd|vhdl|xdc|txt)$/i.test(name)) return toast('Use a .vhd, .vhdl, .xdc or .txt file name'); if (name in files) return toast('File already exists'); files[name] = ''; openFile(name); resetHistory(); };
+$('new-project').onclick = () => {if(Object.keys(files).length&&!confirm('Create an empty project? Export your current project first to keep a backup.'))return;resetHistory();files={};mapping={};mappingOverrides={};rawInputs={};userClocks={};projectInfo=null;inspector.reset();$('top').value='main';$('timing').value='original';$('project-generics').value='{}';openFile('');timingDescription();save();};
+$('inspect').onclick = () => inspectProject().then(()=>{document.querySelector('[data-tab="signals"]').click();toast('Ports and XDC bindings inspected');}).catch(error=>{$('console').textContent=error.message;toast(error.message);});
+$('project-generics').onchange = () => {stopLive();try{genericValues();save();}catch(error){toast(error.message);}};
 $('delete-file').onclick = () => { if (current && confirm(`Delete ${current}?`)) { delete files[current]; resetHistory(); openFile(Object.keys(files)[0] || ''); } };
 function download(name, text, type = 'text/plain') { const url = URL.createObjectURL(new Blob([text], {type})); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
-$('export').onclick = () => download('nexys-project.json', JSON.stringify({files, top: $('top').value, mode: $('mode').value, mapping}, null, 2), 'application/json');
+$('export').onclick = () => download('nexys-project.json', JSON.stringify({files, top: $('top').value, mode: $('mode').value, timing:$('timing').value,mapping,mappingOverrides,rawInputs,userClocks,generics:genericValues()}, null, 2), 'application/json');
 $('download-vcd').onclick = () => {
   if (last?.vcd) return download('signals.vcd',last.vcd);
   if (!last?.wave) return toast('Run a simulation first');
@@ -128,29 +175,29 @@ $('upload').onchange = async e => {
     for (const file of e.target.files) {
       if (file.size > 1000000) throw Error('File exceeds 1 MB');
       const text = await file.text();
-      if (file.name.endsWith('.json')) { const project = JSON.parse(text); if (!project.files || typeof project.files !== 'object') throw Error('Invalid project JSON'); files = project.files; mapping = project.mapping || {}; $('top').value = project.top || 'elevator_top'; $('mode').value = project.mode || 'board'; }
+      if (file.name.endsWith('.json')) { const project = JSON.parse(text); if (!project.files || typeof project.files !== 'object') throw Error('Invalid project JSON'); files = project.files; mapping = project.mapping || {};mappingOverrides=project.mappingOverrides||project.mapping||{};rawInputs=project.rawInputs||{};userClocks=project.userClocks||{};$('project-generics').value=JSON.stringify(project.generics||{});$('timing').value=project.timing||'original'; $('top').value = project.top || ''; $('mode').value = project.mode || 'board'; }
       else { if (!/^[\w.-]+\.(vhd|vhdl|xdc|txt)$/i.test(file.name)) throw Error('Unsupported file type'); if (file.name in files && !confirm(`Replace ${file.name}?`)) continue; files[file.name] = text; }
     }
-    resetHistory(); openFile(Object.keys(files)[0]); modeChanged(false); toast('Files imported');
+    resetHistory(); openFile(Object.keys(files)[0]); modeChanged(false);await inspectProject();timingDescription();toast('Files imported and ports inspected');
   } catch (err) { toast(err.message); }
   e.target.value = '';
 };
 async function loadExample(ask = true) {
   if (ask && !confirm('Replace the current project with the elevator example? Export your edits first.')) return;
-  const response = await fetch('/api/example'); const project = await response.json(); files = project.files; mapping = {}; $('top').value = 'elevator_top'; $('mode').value = 'board'; resetHistory(); openFile('elevator_top.vhd'); modeChanged(false);
+  const response = await fetch('/api/example'); const project = await response.json(); files = project.files; mapping = {};mappingOverrides={};rawInputs={};userClocks={};$('project-generics').value='{}'; $('top').value = 'elevator_top'; $('mode').value = 'board'; resetHistory(); openFile('elevator_top.vhd'); modeChanged(false);
 }
 $('example').onclick = () => loadExample().catch(e => toast(e.message));
-function modeChanged(resetTop = true) { const board = $('mode').value === 'board'; $('duration-label').hidden = board; $('pause').disabled = !board; if (resetTop) $('top').value = board ? 'elevator_top' : 'tb_fsm'; resetHistory(); save(); }
+function modeChanged(resetTop = true) { const board = $('mode').value === 'board'; $('duration-label').hidden = board; $('pause').disabled = !board;$('engine').disabled=board; if (resetTop) { const choices=projectInfo?.entities||[];if(board&&$('top').value.toLowerCase().startsWith('tb'))$('top').value=projectInfo?.suggested_top||$('top').value;else if(!board){const tb=choices.find(name=>name.toLowerCase().startsWith('tb'));if(tb)$('top').value=tb;else if(files['tb_fsm.vhd'])$('top').value='tb_fsm';} } resetHistory(); save(); }
 $('mode').onchange = () => modeChanged(); $('top').onchange = () => { resetHistory(); mapping = {}; save(); };
 $('timing').onchange = () => { resetHistory(); timingDescription(); save(); };
 for (const button of document.querySelectorAll('[data-tab]')) button.onclick = () => {
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('selected', b === button));
-  for (const tab of ['console', 'waves', 'mapping']) $(tab).hidden = tab !== button.dataset.tab;
+  for (const tab of ['console', 'waves', 'mapping','signals','pins']) $(tab).hidden = tab !== button.dataset.tab;
 };
 for (let i = 0; i < 16; i++) {
   const led = document.createElement('div'); led.className = 'led-unit'; led.innerHTML = `<div id="led-${i}" class="led"></div><span class="tiny">${i}</span>`; $('leds').append(led);
   const unit = document.createElement('div'); unit.className = 'led-unit'; const button = document.createElement('button'); button.className = 'switch'; button.setAttribute('aria-label', `Switch ${i}`); button.setAttribute('aria-pressed', 'false'); button.innerHTML = '<i></i>';
-  button.onclick = () => { sw ^= 1 << i; button.classList.toggle('on', !!(sw & (1 << i))); button.setAttribute('aria-pressed', String(!!(sw & (1 << i)))); $('switch-value').textContent = '0x' + sw.toString(16).padStart(4, '0').toUpperCase(); };
+  button.onclick = () => { sw ^= 1 << i;releasePhysicalOverride('sw['+i+']'); button.classList.toggle('on', !!(sw & (1 << i))); button.setAttribute('aria-pressed', String(!!(sw & (1 << i)))); $('switch-value').textContent = '0x' + sw.toString(16).padStart(4, '0').toUpperCase(); };
   const label = document.createElement('span'); label.className = 'tiny'; label.textContent = i; unit.append(button, label); $('switches').append(unit);
 }
 const polygons = ['5,1 20,1 17,4 8,4','21,2 21,17 18,15 18,5','21,21 21,36 18,33 18,23','5,37 20,37 17,34 8,34','3,21 6,23 6,33 3,36','3,2 6,5 6,15 3,17','5,19 8,16 17,16 20,19 17,21 8,21'];
@@ -158,10 +205,15 @@ for (let i = 7; i >= 0; i--) { const digit = document.createElement('div'); digi
 function integer(val) { return val && /^[01]+$/.test(val) ? parseInt(val, 2) : null; }
 function renderBoard(result) {
   const values = result.wave?.values || {}; const ports = result.ports || [];
-  const valueFor = target => { const p = ports.find(p => result.mapping?.[p.name] === target); if (!p) return null; const key = Object.keys(values).find(k => k.startsWith('lab_board_tb.io_' + p.name.toLowerCase()) && !k.includes('.dut.')); return integer(values[key]); };
-  const door = valueFor('door'); const leds = valueFor('led') ?? (door || 0);
+  const valueFor = target => { const p = ports.find(p => result.mapping?.[p.name] === target); if (!p) return null; const prefix='lab_board_tb.io_' + p.name.toLowerCase();const key = Object.keys(values).find(k => k===prefix||k.startsWith(prefix+'[')); return integer(values[key]); };
+  const board=result.board_values||{};
+  const door = valueFor('door'); let leds = valueFor('led') ?? (door || 0);
+  for(let i=0;i<16;i++)if(board['led['+i+']']!==undefined){if(board['led['+i+']']==='1')leds|=1<<i;else leds&=~(1<<i);}
   for (let i = 0; i < 16; i++) $(`led-${i}`).classList.toggle('on', !!(leds & (1 << i)));
-  $('door-status').textContent = door === null ? 'NO OUTPUT / NOT RUN' : door ? 'DOOR OPEN' : 'DOOR CLOSED';
+  $('door-status').textContent = door === null ? result.ok?'LED BANK · '+leds.toString(16).padStart(4,'0').toUpperCase():'NOT RUNNING' : door ? 'DOOR OPEN' : 'DOOR CLOSED';
+  for(let i=0;i<2;i++){const rgb=['r','g','b'].map(c=>board['rgb['+i+'].'+c]==='1'?255:0);$('rgb-'+i).style.background='rgb('+rgb.join(',')+')';$('rgb-'+i).style.boxShadow=rgb.some(Boolean)?'0 0 8px rgb('+rgb.join(',')+')':'none';}
+  const nibble=group=>{let n=0;for(let i=0;i<4;i++)if(board[group+'['+i+']']==='1')n|=1<<i;return n.toString(16).toUpperCase();};
+  $('vga-level').textContent=Object.keys(board).some(k=>k.startsWith('vga_'))?'VGA raw #'+nibble('vga_r')+nibble('vga_g')+nibble('vga_b')+' HS:'+board.vga_hs+' VS:'+board.vga_vs:'VGA: raw signals';
   const history = result.wave?.events || []; const segPort = ports.find(p => result.mapping?.[p.name] === 'segment'); const anPort = ports.find(p => result.mapping?.[p.name] === 'an');
   let seg = null, an = null; const digits = {};
   // Sample after all changes at a timestamp, avoiding delta-cycle display ghosts.
@@ -179,11 +231,11 @@ function renderBoard(result) {
 }
 function renderMapping(result) {
   $('mapping-fields').replaceChildren();
-  const options = ['clock', 'sw', 'btnC', 'btnU', 'btnL', 'btnR', 'btnD', 'led', 'segment', 'an', 'dp', 'door', 'zero', 'unused'];
+  const options = ['clock', 'sw', ...Array.from({length:16},(_,i)=>'sw['+i+']'), 'btnC', 'btnU', 'btnL', 'btnR', 'btnD', 'led', 'segment', 'an', 'dp', 'door', 'zero', 'unused'];
   for (const p of result.ports || []) {
     const row = document.createElement('div'); row.className = 'map-row'; const label = document.createElement('label'); label.textContent = `${p.name} (${p.direction}, ${p.width} bit)`; const select = document.createElement('select');
-    for (const option of options.filter(v => p.direction === 'in' ? ['clock','sw','btnC','btnU','btnL','btnR','btnD','zero'].includes(v) : ['led','segment','an','dp','door','unused'].includes(v))) { const opt = document.createElement('option'); opt.value = option; opt.textContent = option; select.append(opt); }
-    select.value = result.mapping[p.name]; select.onchange = () => { mapping[p.name] = select.value; resetHistory(); save(); }; row.append(label, select); $('mapping-fields').append(row);
+    for (const option of options.filter(v => p.direction === 'in' ? ['clock','sw','btnC','btnU','btnL','btnR','btnD','zero'].includes(v)||v.startsWith('sw[') : ['led','segment','an','dp','door','unused'].includes(v))) { const opt = document.createElement('option'); opt.value = option; opt.textContent = option; select.append(opt); }
+    select.value = result.mapping[p.name];select.disabled=xdcControls(p.name);if(select.disabled)select.title='Physical XDC bindings take priority. Edit XDC or drive raw inputs in Signals.'; select.onchange = () => { mapping[p.name] = select.value;mappingOverrides[p.name]=select.value; resetHistory(); save(); }; row.append(label, select); $('mapping-fields').append(row);
   }
 }
 function renderWaves(wave) {
@@ -203,7 +255,7 @@ async function run(extra = []) {
   if (busy) return; busy = true; $('run').disabled = true; $('run').textContent = '◌ Simulating…'; $('result').textContent = 'GHDL running';
   const oldCommands = commands.slice(); commands.push(...extra);
   try {
-    const res = await fetch('/api/run', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({files, top:$('top').value, mode:$('mode').value, duration:$('duration').value, fast:false, commands, mapping})});
+    const res = await fetch('/api/run', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({files, top:$('top').value, mode:$('mode').value, duration:$('duration').value, fast:false, commands, mapping,generics:genericValues(),engine:$('engine').value,vivado_path:$('vivado-path').value})});
     const result = await res.json(); if (!res.ok || result.error) throw Error(result.error || res.statusText);
     $('console').textContent = (result.overrides?.length ? 'ACCELERATED TIMING (temporary copies only):\n' + result.overrides.join('\n') + '\n\n' : '') + result.log;
     $('result').textContent = result.ok ? '● Simulation passed' : '● ' + result.phase + ' failed'; $('result').style.color = result.ok ? '#b5ec69' : '#fa897f';
@@ -215,14 +267,19 @@ async function run(extra = []) {
   finally { busy = false; $('run').disabled = false; $('run').innerHTML = '▶ Run simulation <kbd>Ctrl ↵</kbd>'; }
 }
 $('run').onclick = () => run(); $('pause').onclick = () => { if (!liveToken) return; if(!paused){pausedAt=performance.now();paused=true;}else{pausedWall+=performance.now()-pausedAt;paused=false;} $('pause').textContent = paused ? '▶ Resume' : 'Ⅱ Pause'; $('result').textContent = paused ? 'Paused' : 'Running'; }; $('reset').onclick = () => { resetHistory(); if ($('mode').value === 'board') run(); };
-document.querySelectorAll('[data-button]').forEach(button => button.onclick = () => { if (!liveToken) return toast('Press Run to start the continuous clock first'); holds.set(button.dataset.button,{remainingNs:30000000/timeScale}); button.classList.add('pressed'); $('input-status').textContent = button.dataset.button === 'btnU' ? 'GO queued · switch value '+sw+'. Delivering to VHDL…' : button.dataset.button+' queued for VHDL.'; });
+document.querySelectorAll('[data-button]').forEach(button => button.onclick = () => { if (!liveToken) return toast('Press Run to start the continuous clock first');releasePhysicalOverride(button.dataset.button); holds.set(button.dataset.button,{remainingNs:30000000/timeScale}); button.classList.add('pressed'); $('input-status').textContent = button.dataset.button === 'btnU' ? 'GO queued · switch value '+sw+'. Delivering to VHDL…' : button.dataset.button+' queued for VHDL.'; });
+$('cpu-reset').onclick=()=>{if(!liveToken)return toast('Press Run first');releasePhysicalOverride('cpu_resetn');holds.set('cpu_resetn',{remainingNs:30000000/timeScale});};
 window.addEventListener('pagehide',()=>{if(liveToken)fetch('/api/live/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session:liveToken}),keepalive:true}).catch(()=>{});});
 document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run(); } });
 async function init() {
+  $('vivado-path').value=localStorage.getItem('nexys-vivado-path')||'';
   try {const savedPhoto=localStorage.getItem(photoKey);setBoardPhoto(savedPhoto==='vector'?null:(savedPhoto||'nexys-a7-photo.jpg'));}catch{setBoardPhoto('nexys-a7-photo.jpg');}
-  try { const saved = JSON.parse(localStorage.getItem(storageKey)); if (saved?.files && Object.keys(saved.files).length) { files = saved.files; mapping = saved.mapping || {}; $('top').value = saved.top || 'elevator_top'; $('mode').value = saved.mode || 'board'; $('timing').value = saved.timing === 'interactive' ? 'interactive' : 'original'; openFile(saved.current || Object.keys(files)[0]); modeChanged(false); } else await loadExample(false); }
+  try { const saved = JSON.parse(localStorage.getItem(storageKey)); if (saved?.files && !Array.isArray(saved.files)) { files = saved.files; mapping = saved.mapping || {};mappingOverrides=saved.mappingOverrides||{};rawInputs=saved.rawInputs||{};userClocks=saved.userClocks||{};$('project-generics').value=JSON.stringify(saved.generics||{});$('engine').value=saved.engine||'ghdl'; $('top').value = saved.top || 'main'; $('mode').value = saved.mode || 'board'; $('timing').value = saved.timing === 'interactive' ? 'interactive' : 'original'; openFile(saved.current || Object.keys(files)[0]||''); modeChanged(false); } else await loadExample(false); }
   catch { await loadExample(false); }
   timingDescription();
+  try{pinCatalog=await(await fetch('/api/board')).json();if(NexysSignals.renderCatalog)catalogView=NexysSignals.renderCatalog($('pin-catalog'),pinCatalog,{},{});}catch{}
   try { const health = await (await fetch('/api/health', {cache:'no-store'})).json(); $('app-version').textContent = 'FPGA WORKSPACE · v' + (health.app_version || 'unknown'); if (!health.ok) { $('console').textContent = health.error; $('result').textContent = 'GHDL setup required'; toast('GHDL is unavailable. See Terminal for setup instructions.'); } } catch { toast('Backend is unavailable. Start python3 server.py'); }
 }
 init();
+$('detect-engines').onclick=async()=>{try{localStorage.setItem('nexys-vivado-path',$('vivado-path').value);const data=await(await fetch('/api/engines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vivado_path:$('vivado-path').value})})).json();$('engine-status').textContent='GHDL: '+(data.ghdl.ok?'ready':'not found')+' · XSim: '+(data.vivado.available?'detected; run a testbench to validate':data.vivado.error);}catch(error){$('engine-status').textContent=error.message;}};
+$('test-vivado').onclick=async()=>{const button=$('test-vivado');button.disabled=true;$('engine-status').textContent='Compiling and running the installed XSim self-test…';try{const response=await fetch('/api/engines/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vivado_path:$('vivado-path').value})});const data=await response.json();$('console').textContent=data.log||data.error||'No test output';$('engine-status').textContent=data.ok?'Vivado XSim self-test passed on this computer.':'Vivado test failed. See Terminal for the exact diagnostic.';document.querySelector('[data-tab="console"]').click();}catch(error){$('engine-status').textContent=error.message;}finally{button.disabled=false;}};
