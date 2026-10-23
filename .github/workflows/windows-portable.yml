@@ -35,7 +35,10 @@ jobs:
         with:
           node-version: '22'
       - name: Test highlighting and diagnostic parsing
-        run: node scripts/test_editor_tools.cjs
+        run: |
+          node scripts/test_editor_tools.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/test_pacing.cjs
       - name: Install browser regression tools (not shipped in the app)
         run: |
           npm install --no-save --package-lock=false playwright@1.56.1
@@ -60,6 +63,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Generic project browser regression failed' }
             node scripts/check_editor.cjs
             if ($LASTEXITCODE -ne 0) { throw 'Editor and diagnostics browser regression failed' }
+            node scripts/check_pacing.cjs
+            if ($LASTEXITCODE -ne 0) { throw 'Adaptive pacing browser regression failed' }
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
           }

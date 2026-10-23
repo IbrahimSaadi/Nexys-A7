@@ -130,8 +130,8 @@ async function main() {
     await page.waitForTimeout(600);
     const resumedTime = (await boardState(page)).time;
     const boardSeconds = (parseFloat(resumedTime) - parseFloat(pausedTime));
-    assert.ok(boardSeconds > 0 && boardSeconds < 0.001,
-      `Expected bounded HDL progress after resuming; observed ${boardSeconds}`);
+    assert.ok(boardSeconds > 0,
+      `HDL time must advance after resuming; observed ${boardSeconds}`);
     console.log(JSON.stringify({ resumedBoardSeconds: boardSeconds, resumedWallSeconds: 0.6,
       goIssuedDuringFrame: true }));
 

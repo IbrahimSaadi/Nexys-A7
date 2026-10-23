@@ -63,6 +63,16 @@ There is no application-specific timing selector. Previously saved or imported `
 
 Board instructions use physical control names (BTNU, BTNC, SW0, LED0) and inspected signal names. The interface does not infer a floor, door, GO action or any other application meaning. Creating a new project clears the previous signal inspection, bindings, output history and control state.
 
+## Performance measurements and batching
+
+Signals → **LIVE BATCHING** defaults to Auto. It begins with a small probe and adjusts each observation batch toward roughly 20 ms of simulator waiting, bounded by **MAX SAMPLE INTERVAL** (10 ns–10 ms). Fixed mode retains a constant observation interval. Button release boundaries can shorten a batch in either mode. These controls never change the HDL clock period, source constants or scheduled events. Larger observation intervals can miss brief signal changes; Testbench VCD remains the option for complete waveform analysis.
+
+The live performance readout separates simulator waiting (including process communication), Python frame construction, approximate HTTP/JSON overhead and JavaScript UI update time. It also displays lag behind active wall time; pauses are excluded. These are elapsed-time measurements, not CPU profiling or hard real-time guarantees.
+
+The browser receives new samples instead of the entire repeated history, retaining the latest 4,000 events locally for sampled waveforms/export. Board rendering is limited to about 30 updates per second, and hidden signal/waveform panels update when opened. Simulation requests continue independently and wait if HDL time gets ahead of active wall time. A slow design still runs slower than hardware; batching cannot remove its event-processing cost.
+
+For a reproducible local comparison, run `python scripts/benchmark_live.py --history` and `python scripts/benchmark_live.py`. Both execute the same 600,000 clock edges; the response sizes show transfer savings. The benchmark does not claim a universal execution-speed improvement.
+
 ## Testbench engines
 
 **GHDL** runs continuous Board mode and Testbench mode. The included elevator `tb_fsm` with duration2us must report ALL FSM TESTS PASSED. Testbench mode compiles the selected project, applies generic overrides, honors the stop time, detects assertion failures and exports a full VCD. A successful stop-time run alone is not proof of correctness.

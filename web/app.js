@@ -23,6 +23,12 @@ function goToProblem(problem) {
   if(column>60)editor.scrollLeft=(column-20)*parseFloat(getComputedStyle(editor).fontSize)*0.6;
   updateLines();editorTools.sync();
 }
+function restoreSampling(project){
+ $('batch-mode').value=project.batchMode==='fixed'?'fixed':'auto';
+ const ns=project.sampleInterval;
+ $('frame-quantum').value=Number.isInteger(ns)&&ns>=10&&ns<=10000000&&ns%10===0?ns:1000000;
+}
+for(const id of ['batch-mode','frame-quantum'])$(id).onchange=()=>{pacing.reset();save();};
 function genericValues() {
   const value=JSON.parse($('project-generics').value||'{}');
   if (!value || Array.isArray(value) || typeof value!=='object') throw Error('Generic values must be a JSON object');
@@ -83,7 +89,8 @@ $('photo-upload').onchange = async event => {
   event.target.value='';
 };
 let liveToken = null, paused = false, liveGeneration = 0, simNs = 0, wallStart = 0, liveTimer = null;
-let pausedAt = 0, pausedWall = 0;
+let pausedAt = 0, pausedWall = 0, lastPaint = -Infinity;
+const pacing = new NexysPacing.Controller();
 const holds = new Map();
 const activeWallMs = () => (paused ? pausedAt : performance.now()) - wallStart - pausedWall;
 function updateProjectGuidance() {
@@ -110,7 +117,7 @@ function clearInspection() {
 }
 function newProject() {
   files={};mapping={};mappingOverrides={};rawInputs={};userClocks={};sw=0;
-  clearInspection();$('top').value='main';$('mode').value='board';$('project-generics').value='{}';
+  clearInspection();$('top').value='main';$('mode').value='board';$('project-generics').value='{}';$('batch-mode').value='auto';$('frame-quantum').value='1000000';
   document.querySelectorAll('.switch').forEach(button=>{button.classList.remove('on');button.setAttribute('aria-pressed','false');});
   $('switch-value').textContent='0x0000';$('console').textContent='New project. Add or import VHDL files, then select the top entity.';
   openFile('');modeChanged(false);
@@ -134,7 +141,7 @@ async function startLive() {
     const info=await inspectProject();
     const data = await liveRequest('start', {files, top:$('top').value, mapping, timing:'original', generics:genericValues(),clocks:{...info.clocks,...userClocks},inputs:physicalInputs([]),board_bindings:info.bindings.mapping});
     if (generation !== liveGeneration) { await liveRequest('stop',{session:data.session}); return; }
-    liveToken = data.session; mapping = data.mapping; simNs = 0; paused = false; holds.clear(); wallStart = performance.now(); pausedWall = 0;
+    liveToken = data.session; mapping = data.mapping; simNs = 0; paused = false; holds.clear(); wallStart = performance.now(); pausedWall = 0;lastPaint=-Infinity;pacing.reset();last=data;
     $('input-status').textContent = 'Running · '+$('top').value+'. Drive inputs using the mapped board controls or Signals.';
     $('pause').textContent = 'Ⅱ Pause'; $('run').textContent = '■ Stop simulation'; showLog(data.log);
     renderBoard(data); renderMapping(data); save();
@@ -145,20 +152,32 @@ async function startLive() {
         const begin = performance.now();
         const presses = [...holds].filter(([,press])=>press.remainingNs > 0);
         const buttons = presses.map(([name])=>name);
-        const quantum = Number($('frame-quantum').value);
-        const frame = await liveRequest('advance', {session:liveToken, sw, buttons:buttons.filter(b=>b!=='cpu_resetn'), ns:quantum,inputs:physicalInputs(buttons)});
+        const quantum = pacing.interval(Number($('frame-quantum').value),$('batch-mode').value==='auto',Math.min(Infinity,...presses.map(([,press])=>press.remainingNs)));
+        const frame = await liveRequest('advance', {session:liveToken, sw, buttons:buttons.filter(b=>b!=='cpu_resetn'), ns:quantum,wave_history:false,inputs:physicalInputs(buttons)});
         if (generation !== liveGeneration) return;
+        const requestMs=performance.now()-begin;
+        pacing.observe(quantum,frame.performance?.simulator_wait_ms);
+        frame.wave=NexysPacing.mergeWave(last?.wave,frame.wave);
         simNs = frame.sim_ns; last = frame;
         for (const [name,press] of presses) if (holds.get(name) === press) { press.remainingNs-=quantum; if(press.remainingNs<=0) holds.delete(name); }
         if (buttons.length) $('input-status').textContent = buttons.map(controlLabel).join('; ')+' delivered to VHDL. Observe your design outputs.';
-        renderBoard(frame); renderWaves(frame.wave);inspector.update(frame);catalogView?.update?.(frame);
         const wall = activeWallMs()/1000, sim = simNs/1e9;
-        $('sim-time').textContent = sim.toFixed(6) + ' s'; $('wall-time').textContent = wall.toFixed(2)+' s';
-        $('sim-speed').textContent = (sim/Math.max(wall,0.001)).toFixed(4)+'× · 1 HDL s ≈ '+Math.round(wall/Math.max(sim,1e-9))+' wall s';
+        if(performance.now()-lastPaint>=1000/30){
+          const uiStart=performance.now();
+          renderBoard(frame);
+          if(!$('waves').hidden)renderWaves(frame.wave);
+          if(!$('signals').hidden)inspector.update(frame);
+          if(!$('pins').hidden)catalogView?.update?.(frame);
+          $('sim-time').textContent = sim.toFixed(6) + ' s'; $('wall-time').textContent = wall.toFixed(2)+' s';
+          $('sim-speed').textContent = (sim/Math.max(wall,0.001)).toFixed(4)+'× · 1 HDL s ≈ '+Math.round(wall/Math.max(sim,1e-9))+' wall s';
+          const uiMs=performance.now()-uiStart,metrics=frame.performance||{};
+          $('performance-details').textContent='Batch: '+quantum.toLocaleString()+' ns · '+$('batch-mode').value+'\nSimulator wait: '+(metrics.simulator_wait_ms||0).toFixed(1)+' ms · Frame build: '+(metrics.frame_build_ms||0).toFixed(1)+' ms\nHTTP/JSON overhead ≈ '+Math.max(0,requestMs-(metrics.backend_ms||0)).toFixed(1)+' ms · UI update: '+uiMs.toFixed(1)+' ms\nBehind wall time: '+Math.max(0,wall-sim).toFixed(3)+' s';
+          lastPaint=performance.now();
+        }
         $('result').textContent = paused ? 'Paused' : '● Running · original timing'; $('result').style.color = '#b5ec69';
         document.querySelectorAll('[data-button]').forEach(b=>b.classList.toggle('pressed',holds.has(b.dataset.button)));
         // Never run ahead of wall time; slower simulation remains visibly slower.
-        const wait = Math.max(0, sim*1000-activeWallMs(), 16-(performance.now()-begin));
+        const wait = Math.max(0, sim*1000-activeWallMs());
         liveTimer = setTimeout(pump,wait);
       } catch (error) { if (generation === liveGeneration) { stopLive(); showLog(error.message,true); $('result').textContent = 'Simulator stopped'; } }
     };
@@ -168,10 +187,10 @@ async function startLive() {
 }
 function toast(message) { $('toast').textContent = message; $('toast').classList.add('show'); setTimeout(() => $('toast').classList.remove('show'), 3000); }
 function save() {
-  try { localStorage.setItem(storageKey, JSON.stringify({files, current, top: $('top').value, mode: $('mode').value, timing:'original', mapping,mappingOverrides,rawInputs,userClocks,generics:genericValues(),engine:$('engine').value})); $('saved').textContent = '● Saved locally'; }
+  try { localStorage.setItem(storageKey, JSON.stringify({files, current, top: $('top').value, mode: $('mode').value, timing:'original', mapping,mappingOverrides,rawInputs,userClocks,generics:genericValues(),batchMode:$('batch-mode').value,sampleInterval:Number($('frame-quantum').value),engine:$('engine').value})); $('saved').textContent = '● Saved locally'; }
   catch { $('saved').textContent = 'Storage full · export your project'; }
 }
-function resetHistory() { stopLive(); editorTools.clear(); commands = []; last = null; simNs = 0; renderBoard({}); renderWaves(null); updateProjectGuidance(); $('result').textContent = 'Session reset'; $('input-status').textContent=Object.keys(files).length ? ($('mode').value==='board'?'Press Run to simulate the selected top entity. Use mapped controls or Signals to drive inputs.':'Select a testbench entity and press Run. Stimuli come from the testbench.') : 'Add or import VHDL files to begin a new project.'; $('sim-time').textContent='0.000000 s'; $('wall-time').textContent='0.00 s'; $('sim-speed').textContent='—'; }
+function resetHistory() { stopLive();pacing.reset();$('performance-details').textContent='Run to measure simulator, transfer and interface time.'; editorTools.clear(); commands = []; last = null; simNs = 0; renderBoard({}); renderWaves(null); updateProjectGuidance(); $('result').textContent = 'Session reset'; $('input-status').textContent=Object.keys(files).length ? ($('mode').value==='board'?'Press Run to simulate the selected top entity. Use mapped controls or Signals to drive inputs.':'Select a testbench entity and press Run. Stimuli come from the testbench.') : 'Add or import VHDL files to begin a new project.'; $('sim-time').textContent='0.000000 s'; $('wall-time').textContent='0.00 s'; $('sim-speed').textContent='—'; }
 function fileList() {
   $('files').replaceChildren();
   for (const name of Object.keys(files)) {
@@ -196,7 +215,7 @@ $('inspect').onclick = () => inspectProject().then(()=>{document.querySelector('
 $('project-generics').onchange = () => {stopLive();try{genericValues();save();}catch(error){toast(error.message);}};
 $('delete-file').onclick = () => { if (current && confirm(`Delete ${current}?`)) { delete files[current]; clearInspection();resetHistory(); openFile(Object.keys(files)[0] || ''); } };
 function download(name, text, type = 'text/plain') { const url = URL.createObjectURL(new Blob([text], {type})); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
-$('export').onclick = () => download('nexys-project.json', JSON.stringify({files, top: $('top').value, mode: $('mode').value, timing:'original',mapping,mappingOverrides,rawInputs,userClocks,generics:genericValues()}, null, 2), 'application/json');
+$('export').onclick = () => download('nexys-project.json', JSON.stringify({files, top: $('top').value, mode: $('mode').value, timing:'original',mapping,mappingOverrides,rawInputs,userClocks,generics:genericValues(),batchMode:$('batch-mode').value,sampleInterval:Number($('frame-quantum').value)}, null, 2), 'application/json');
 $('download-vcd').onclick = () => {
   if (last?.vcd) return download('signals.vcd',last.vcd);
   if (!last?.wave) return toast('Run a simulation first');
@@ -215,7 +234,7 @@ $('upload').onchange = async e => {
     for (const file of e.target.files) {
       if (file.size > 1000000) throw Error('File exceeds 1 MB');
       const text = await file.text();
-      if (file.name.endsWith('.json')) { const project = JSON.parse(text); if (!project.files || typeof project.files !== 'object') throw Error('Invalid project JSON'); files = project.files; mapping = project.mapping || {};mappingOverrides=project.mappingOverrides||project.mapping||{};rawInputs=project.rawInputs||{};userClocks=project.userClocks||{};$('project-generics').value=JSON.stringify(project.generics||{}); $('top').value = project.top || ''; $('mode').value = project.mode || 'board'; }
+      if (file.name.endsWith('.json')) { const project = JSON.parse(text); if (!project.files || typeof project.files !== 'object') throw Error('Invalid project JSON'); files = project.files; mapping = project.mapping || {};mappingOverrides=project.mappingOverrides||project.mapping||{};rawInputs=project.rawInputs||{};userClocks=project.userClocks||{};$('project-generics').value=JSON.stringify(project.generics||{});restoreSampling(project); $('top').value = project.top || ''; $('mode').value = project.mode || 'board'; }
       else { if (!/^[\w.-]+\.(vhd|vhdl|xdc|txt)$/i.test(file.name)) throw Error('Unsupported file type'); if (file.name in files && !confirm(`Replace ${file.name}?`)) continue; files[file.name] = text; }
     }
     resetHistory(); openFile(Object.keys(files)[0]); modeChanged(false);await inspectProject();toast('Files imported and ports inspected');
@@ -232,6 +251,7 @@ $('mode').onchange = () => modeChanged(); $('top').onchange = () => { clearInspe
 for (const button of document.querySelectorAll('[data-tab]')) button.onclick = () => {
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('selected', b === button));
   for (const tab of ['console', 'problems', 'waves', 'mapping','signals','pins']) $(tab).hidden = tab !== button.dataset.tab;
+  if(last?.board){if(button.dataset.tab==='waves')renderWaves(last.wave);if(button.dataset.tab==='signals')inspector.update(last);if(button.dataset.tab==='pins')catalogView?.update?.(last);}
 };
 for (let i = 0; i < 16; i++) {
   const led = document.createElement('div'); led.className = 'led-unit'; led.innerHTML = `<div id="led-${i}" class="led"></div><span class="tiny">${i}</span>`; $('leds').append(led);
@@ -313,7 +333,7 @@ document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.ke
 async function init() {
   $('vivado-path').value=localStorage.getItem('nexys-vivado-path')||'';
   try {const savedPhoto=localStorage.getItem(photoKey);setBoardPhoto(savedPhoto==='vector'?null:(savedPhoto||'nexys-a7-photo.jpg'));}catch{setBoardPhoto('nexys-a7-photo.jpg');}
-  try { const saved = JSON.parse(localStorage.getItem(storageKey)); if (saved?.files && !Array.isArray(saved.files)) { files = saved.files; mapping = saved.mapping || {};mappingOverrides=saved.mappingOverrides||{};rawInputs=saved.rawInputs||{};userClocks=saved.userClocks||{};$('project-generics').value=JSON.stringify(saved.generics||{});$('engine').value=saved.engine||'ghdl'; $('top').value = saved.top || 'main'; $('mode').value = saved.mode || 'board';  openFile(saved.current || Object.keys(files)[0]||''); modeChanged(false); } else newProject(); }
+  try { const saved = JSON.parse(localStorage.getItem(storageKey)); if (saved?.files && !Array.isArray(saved.files)) { files = saved.files; mapping = saved.mapping || {};mappingOverrides=saved.mappingOverrides||{};rawInputs=saved.rawInputs||{};userClocks=saved.userClocks||{};$('project-generics').value=JSON.stringify(saved.generics||{});restoreSampling(saved);$('engine').value=saved.engine||'ghdl'; $('top').value = saved.top || 'main'; $('mode').value = saved.mode || 'board';  openFile(saved.current || Object.keys(files)[0]||''); modeChanged(false); } else newProject(); }
   catch { newProject(); }
   try{pinCatalog=await(await fetch('/api/board')).json();if(NexysSignals.renderCatalog)catalogView=NexysSignals.renderCatalog($('pin-catalog'),pinCatalog,{},{});}catch{}
   try { const health = await (await fetch('/api/health', {cache:'no-store'})).json(); $('app-version').textContent = 'FPGA WORKSPACE · v' + (health.app_version || 'unknown'); if (!health.ok) { $('console').textContent = health.error; $('result').textContent = 'GHDL setup required'; toast('GHDL is unavailable. See Terminal for setup instructions.'); } } catch { toast('Backend is unavailable. Start python3 server.py'); }

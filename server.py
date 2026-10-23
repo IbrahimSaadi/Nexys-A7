@@ -15,7 +15,7 @@ from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 ROOT = Path(__file__).resolve().parent
 MAX_FILES = 40
-APP_VERSION = '0.4.7'
+APP_VERSION = '0.4.8'
 
 
 def find_ghdl():

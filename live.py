@@ -372,7 +372,8 @@ class Session:
         finally:
             self.frames.put(None)
 
-    def frame(self):
+    def frame(self, include_history=True):
+        waiting = time.perf_counter()
         try:
             line = self.frames.get(timeout=30)
         except queue.Empty:
@@ -380,14 +381,18 @@ class Session:
             raise ValueError('Simulator did not respond in 30 seconds. Session stopped.')
         if line is None:
             raise ValueError('Simulator stopped:\n' + '\n'.join(self.logs[-20:]))
+        received = time.perf_counter()
         parts = line.split()
         scale = {'fs':1, 'ps':1000, 'ns':1000000, 'us':1000000000, 'ms':1000000000000, 'sec':1000000000000000}
         stamp = int(Decimal(parts[1]) * scale[parts[2]])
         values = {}
+        events = []
         for p, value in zip(self.outputs, parts[3:]):
             name = 'lab_board_tb.io_' + p['name'].lower()
             values[name] = value
-            self.history.append([stamp, name, value])
+            events.append([stamp, name, value])
+        self.history.extend(events)
+        truncated = len(self.history) > 4000
         self.history = self.history[-4000:]
         digits = parts[3+len(self.outputs):3+len(self.outputs)+8]
         sim_ns = (stamp-200000000)/1000000
@@ -395,15 +400,19 @@ class Session:
         heading = ('CONTINUOUS · ORIGINAL VHDL · NO TIMING OVERRIDES' if self.timing == 'original' else
                    'INTERACTIVE PREVIEW · COUNTERS SCALED 1:10000 IN TEMPORARY COPIES\n' + '\n'.join(self.overrides))
         heading += '\nCLOCKS: ' + clock_note
-        return {'ok': True, 'board': True, 'ports': self.ports, 'mapping': self.mapping,
+        result = {'ok': True, 'board': True, 'ports': self.ports, 'mapping': self.mapping,
                 'digits': digits, 'sim_ns': (stamp-200000000)/1000000,
                 'board_ns': sim_ns*self.time_scale, 'timing': self.timing, 'time_scale': self.time_scale,
                 'overrides': self.overrides, 'inputs': self.inputs.copy(),
                 'input_values': self.input_values.copy(), 'port_inputs': self.input_values.copy(),
                 'manual_inputs': self.raw_inputs.copy(), 'clocks': self.clocks,
                 'board_bindings': self.board_bindings, 'board_values': self.board_values(values),
-                'wave': {'values':values, 'events': self.history[:], 'end':stamp, 'truncated':False},
+                'wave': {'values':values, 'events': self.history[:] if include_history else events,
+                         'end':stamp, 'truncated':truncated, 'mode':'history' if include_history else 'delta'},
                 'log': heading + '\n' + '\n'.join(self.logs)}
+        result['performance'] = {'simulator_wait_ms': (received-waiting)*1000,
+                                 'frame_build_ms': (time.perf_counter()-received)*1000}
+        return result
 
     def board_values(self, observed):
         result = {}
@@ -449,12 +458,16 @@ class Session:
 
     def advance(self, data):
         with self.lock:
+            started = time.perf_counter()
             if self.closed:
                 raise ValueError('Session closed. Press Run to start again.')
             self.touched = time.monotonic()
             switches = int(data.get('sw', 0))
             buttons = data.get('buttons', [])
             duration = int(data.get('ns', 1000000))
+            include_history = data.get('wave_history', True)
+            if not isinstance(include_history, bool):
+                raise ValueError('wave_history must be a boolean')
             if not 0 <= switches <= 65535 or not 10 <= duration <= 10000000 or duration % 10:
                 raise ValueError('Invalid inputs or time interval (10 ns–10 ms, multiple of 10 ns)')
             if not isinstance(buttons, list) or any(b not in ('btnC','btnU','btnL','btnR','btnD') for b in buttons):
@@ -465,7 +478,10 @@ class Session:
             tokens = [str(duration), *[self.input_values[p['name']] for p in self.drive_ports]]
             self.process.stdin.write(' '.join(tokens) + '\n')
             self.process.stdin.flush()
-            return self.frame()
+            result = self.frame(include_history)
+            result['performance'].update({'backend_ms': (time.perf_counter()-started)*1000,
+                                          'interval_ns': duration})
+            return result
 
     def close(self):
         self.closed = True
