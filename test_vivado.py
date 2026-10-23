@@ -18,7 +18,8 @@ class VivadoTests(unittest.TestCase):
                     if os.name!='nt':self.assertFalse(vivado.status()['available'])
                 (folder/('xsim'+suffix)).touch()
                 found=vivado.discover()
-                self.assertEqual(Path(found['xsim']).parent,folder)
+                # Windows may expand the TEMP directory's DOS short name.
+                self.assertTrue(Path(found['xsim']).parent.samefile(folder))
 
     def test_batch_metacharacters_are_not_interpreted(self):
         with self.assertRaises(ValueError):vivado.command('C:/Vivado/bin/xsim.bat',['snapshot','name&whoami'])
