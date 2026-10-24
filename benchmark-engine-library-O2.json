@@ -1,0 +1,101 @@
+[
+  {
+    "project": "counter32",
+    "outputs_identical": true,
+    "baseline": {
+      "startup_s": 0.17366229998879135,
+      "run_s": 4.885798400006024,
+      "hdl_s": 0.02,
+      "speed": 0.004093496776284371,
+      "first_quarter_s": 1.2757861998688895,
+      "last_quarter_s": 1.0178601000225171,
+      "snapshots": 201,
+      "snapshot_sha256": "d883b6137324ae8fef3b7f1403ac08a86817b493d8a1550afa5066949c59a5ea",
+      "source_sha256": "0900ca387d167aa0a86affdce7b5230dd1fc9a2305eff246208cdcd4b8bf2908",
+      "flags": [],
+      "version": "GHDL 6.0.0 (6.0.0.r0.ge589c698c.dirty) [Dunoon edition]\n Compiled with GNAT Version: 15.2.0\n static elaboration, mcode JIT code generator\nWritten by Tristan Gingold.\n\nCopyright (C) 2003 - 2026 Tristan Gingold.\nGHDL is free software, covered by the GNU General Public License.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
+    },
+    "candidate": {
+      "startup_s": 0.9408272000146098,
+      "run_s": 2.7800000000279397,
+      "hdl_s": 0.02,
+      "speed": 0.007194244604244243,
+      "first_quarter_s": 0.7638652999594342,
+      "last_quarter_s": 0.5798866999975871,
+      "snapshots": 201,
+      "snapshot_sha256": "d883b6137324ae8fef3b7f1403ac08a86817b493d8a1550afa5066949c59a5ea",
+      "source_sha256": "0900ca387d167aa0a86affdce7b5230dd1fc9a2305eff246208cdcd4b8bf2908",
+      "flags": [
+        "-O2"
+      ],
+      "version": "GHDL 6.0.0 (6.0.0.r0.ge589c698c.dirty) [Dunoon edition]\n Compiled with GNAT Version: 15.2.0\n llvm 21.1.8 code generator\nWritten by Tristan Gingold.\n\nCopyright (C) 2003 - 2026 Tristan Gingold.\nGHDL is free software, covered by the GNU General Public License.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
+    },
+    "speedup": 1.7574814388334248
+  },
+  {
+    "project": "counter128",
+    "outputs_identical": true,
+    "baseline": {
+      "startup_s": 0.16320540002197959,
+      "run_s": 5.346163800015347,
+      "hdl_s": 0.008,
+      "speed": 0.001496400091590354,
+      "first_quarter_s": 1.7681573999871034,
+      "last_quarter_s": 0.9058470999007113,
+      "snapshots": 81,
+      "snapshot_sha256": "479bfe676b0f24d0982dda594d84ca4e168d131c1b09587e8c422d819b1f5d6c",
+      "source_sha256": "6416e062089c7ef516e18eea410045523e3c04b90f32a8357163c101641fc6c0",
+      "flags": [],
+      "version": "GHDL 6.0.0 (6.0.0.r0.ge589c698c.dirty) [Dunoon edition]\n Compiled with GNAT Version: 15.2.0\n static elaboration, mcode JIT code generator\nWritten by Tristan Gingold.\n\nCopyright (C) 2003 - 2026 Tristan Gingold.\nGHDL is free software, covered by the GNU General Public License.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
+    },
+    "candidate": {
+      "startup_s": 0.9292050000221934,
+      "run_s": 2.897141900000861,
+      "hdl_s": 0.008,
+      "speed": 0.002761342135156591,
+      "first_quarter_s": 0.9557181999844033,
+      "last_quarter_s": 0.4973792001255788,
+      "snapshots": 81,
+      "snapshot_sha256": "479bfe676b0f24d0982dda594d84ca4e168d131c1b09587e8c422d819b1f5d6c",
+      "source_sha256": "6416e062089c7ef516e18eea410045523e3c04b90f32a8357163c101641fc6c0",
+      "flags": [
+        "-O2"
+      ],
+      "version": "GHDL 6.0.0 (6.0.0.r0.ge589c698c.dirty) [Dunoon edition]\n Compiled with GNAT Version: 15.2.0\n llvm 21.1.8 code generator\nWritten by Tristan Gingold.\n\nCopyright (C) 2003 - 2026 Tristan Gingold.\nGHDL is free software, covered by the GNU General Public License.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
+    },
+    "speedup": 1.8453234203039066
+  },
+  {
+    "project": "elevator",
+    "outputs_identical": true,
+    "baseline": {
+      "startup_s": 0.4532127999991644,
+      "run_s": 1.014817800023593,
+      "hdl_s": 0.025,
+      "speed": 0.024634964029423594,
+      "first_quarter_s": 0.2540117000171449,
+      "last_quarter_s": 0.2521601999178529,
+      "snapshots": 251,
+      "snapshot_sha256": "aadabcbff5163cc4ef1d26d0d4553e831a152340cb48d8bef59d623d6a05a55b",
+      "source_sha256": "fea9d2f0773846c91ddde0fbe00db655089eb19bd2b40ead2aff6dac48508c70",
+      "flags": [],
+      "version": "GHDL 6.0.0 (6.0.0.r0.ge589c698c.dirty) [Dunoon edition]\n Compiled with GNAT Version: 15.2.0\n static elaboration, mcode JIT code generator\nWritten by Tristan Gingold.\n\nCopyright (C) 2003 - 2026 Tristan Gingold.\nGHDL is free software, covered by the GNU General Public License.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
+    },
+    "candidate": {
+      "startup_s": 1.9238061000069138,
+      "run_s": 0.9060973000014201,
+      "hdl_s": 0.025,
+      "speed": 0.027590855860580115,
+      "first_quarter_s": 0.24357249998138286,
+      "last_quarter_s": 0.22438520003925078,
+      "snapshots": 251,
+      "snapshot_sha256": "aadabcbff5163cc4ef1d26d0d4553e831a152340cb48d8bef59d623d6a05a55b",
+      "source_sha256": "fea9d2f0773846c91ddde0fbe00db655089eb19bd2b40ead2aff6dac48508c70",
+      "flags": [
+        "-O2"
+      ],
+      "version": "GHDL 6.0.0 (6.0.0.r0.ge589c698c.dirty) [Dunoon edition]\n Compiled with GNAT Version: 15.2.0\n llvm 21.1.8 code generator\nWritten by Tristan Gingold.\n\nCopyright (C) 2003 - 2026 Tristan Gingold.\nGHDL is free software, covered by the GNU General Public License.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
+    },
+    "speedup": 1.1199876658080787
+  }
+]

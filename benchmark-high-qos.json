@@ -1,0 +1,80 @@
+{
+  "transport": "http",
+  "project": "counter",
+  "interval_ns": 136560,
+  "connections": 1,
+  "qos": "high",
+  "qos_applied": true,
+  "windows": [
+    {
+      "elapsed_s": 5.013,
+      "batches": 115,
+      "speed": 0.0031330348181608514,
+      "simulator_cpu_fraction": 0.9943850399741787,
+      "request_ms": 43.66700001992285,
+      "wait_ms": 43.00380000495352,
+      "frame_ms": 0.05119998240843415,
+      "transport_ms": 0.5595000111497939
+    },
+    {
+      "elapsed_s": 10.021,
+      "batches": 115,
+      "speed": 0.003135491469776936,
+      "simulator_cpu_fraction": 0.9858058335258667,
+      "request_ms": 43.2112000125926,
+      "wait_ms": 42.527399986283854,
+      "frame_ms": 0.051799986977130175,
+      "transport_ms": 0.551999983144924
+    },
+    {
+      "elapsed_s": 15.064,
+      "batches": 115,
+      "speed": 0.003113898875856832,
+      "simulator_cpu_fraction": 0.9821152269095522,
+      "request_ms": 44.05399999814108,
+      "wait_ms": 43.39330000220798,
+      "frame_ms": 0.04980000085197389,
+      "transport_ms": 0.5582000012509525
+    },
+    {
+      "elapsed_s": 20.081,
+      "batches": 115,
+      "speed": 0.003130310007406536,
+      "simulator_cpu_fraction": 0.9717188358744596,
+      "request_ms": 43.482700013555586,
+      "wait_ms": 42.82030000467785,
+      "frame_ms": 0.05190001684240997,
+      "transport_ms": 0.5543000006582588
+    },
+    {
+      "elapsed_s": 25.105,
+      "batches": 116,
+      "speed": 0.003153044333584539,
+      "simulator_cpu_fraction": 0.9796685351999754,
+      "request_ms": 43.07985000195913,
+      "wait_ms": 42.33050000038929,
+      "frame_ms": 0.05930001498199999,
+      "transport_ms": 0.6226999976206571
+    },
+    {
+      "elapsed_s": 30.124,
+      "batches": 112,
+      "speed": 0.003047495473764977,
+      "simulator_cpu_fraction": 0.9588977089802201,
+      "request_ms": 44.3675999995321,
+      "wait_ms": 42.48474999621976,
+      "frame_ms": 0.06740000389982015,
+      "transport_ms": 0.7269000197993591
+    },
+    {
+      "elapsed_s": 35.016,
+      "batches": 109,
+      "speed": 0.0030429238778905032,
+      "simulator_cpu_fraction": 0.9454810289554867,
+      "request_ms": 44.41400000359863,
+      "wait_ms": 42.44240000844002,
+      "frame_ms": 0.12909999350085855,
+      "transport_ms": 1.792299997759983
+    }
+  ]
+}

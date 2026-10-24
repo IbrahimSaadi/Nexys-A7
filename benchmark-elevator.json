@@ -1,0 +1,130 @@
+{
+  "transport": "http",
+  "project": "elevator",
+  "interval_ns": 136560,
+  "connections": 1,
+  "qos": "high",
+  "qos_applied": true,
+  "windows": [
+    {
+      "elapsed_s": 5.003,
+      "batches": 819,
+      "speed": 0.02235665438088905,
+      "simulator_cpu_fraction": 0.8901522401464822,
+      "request_ms": 5.535700009204447,
+      "wait_ms": 4.981900012353435,
+      "frame_ms": 0.04129999433644116,
+      "transport_ms": 0.4576000210363418
+    },
+    {
+      "elapsed_s": 10.005,
+      "batches": 852,
+      "speed": 0.02325757749002058,
+      "simulator_cpu_fraction": 0.8839095685784711,
+      "request_ms": 5.514349992154166,
+      "wait_ms": 4.957750003086403,
+      "frame_ms": 0.04300000728107989,
+      "transport_ms": 0.476800007163547
+    },
+    {
+      "elapsed_s": 15.008,
+      "batches": 829,
+      "speed": 0.022629006984017912,
+      "simulator_cpu_fraction": 0.8526486933831089,
+      "request_ms": 5.780899984529242,
+      "wait_ms": 5.081500014057383,
+      "frame_ms": 0.049299997044727206,
+      "transport_ms": 0.5576999974437058
+    },
+    {
+      "elapsed_s": 20.012,
+      "batches": 801,
+      "speed": 0.021860534524738736,
+      "simulator_cpu_fraction": 0.9055715638955114,
+      "request_ms": 5.762500019045547,
+      "wait_ms": 5.146400013472885,
+      "frame_ms": 0.04470002022571862,
+      "transport_ms": 0.5197000282350928
+    },
+    {
+      "elapsed_s": 25.014,
+      "batches": 737,
+      "speed": 0.02011992866246326,
+      "simulator_cpu_fraction": 0.9058441093758982,
+      "request_ms": 6.215399975189939,
+      "wait_ms": 5.583899997873232,
+      "frame_ms": 0.04579999949783087,
+      "transport_ms": 0.5311999702826142
+    },
+    {
+      "elapsed_s": 30.016,
+      "batches": 789,
+      "speed": 0.02154162110842316,
+      "simulator_cpu_fraction": 0.8871891821403757,
+      "request_ms": 5.688100005500019,
+      "wait_ms": 5.164700007298961,
+      "frame_ms": 0.04290000651963055,
+      "transport_ms": 0.4593000339809805
+    },
+    {
+      "elapsed_s": 35.018,
+      "batches": 816,
+      "speed": 0.022275867951679955,
+      "simulator_cpu_fraction": 0.8589614787660205,
+      "request_ms": 5.831350004882552,
+      "wait_ms": 5.143300004419871,
+      "frame_ms": 0.04915001045446843,
+      "transport_ms": 0.5502499989233911
+    },
+    {
+      "elapsed_s": 40.023,
+      "batches": 817,
+      "speed": 0.022294088122616424,
+      "simulator_cpu_fraction": 0.8898340798725877,
+      "request_ms": 5.544599989661947,
+      "wait_ms": 5.017100018449128,
+      "frame_ms": 0.042100000428035855,
+      "transport_ms": 0.4539999645203352
+    },
+    {
+      "elapsed_s": 45.026,
+      "batches": 762,
+      "speed": 0.020798780536146127,
+      "simulator_cpu_fraction": 0.758901991569566,
+      "request_ms": 6.3413500029128045,
+      "wait_ms": 5.118400003993884,
+      "frame_ms": 0.06479999865405262,
+      "transport_ms": 0.6597000028705224
+    },
+    {
+      "elapsed_s": 50.033,
+      "batches": 660,
+      "speed": 0.01800171669192645,
+      "simulator_cpu_fraction": 0.7115433299935645,
+      "request_ms": 7.273149996763095,
+      "wait_ms": 5.132049991516396,
+      "frame_ms": 0.14324999938253313,
+      "transport_ms": 1.811399997677654
+    },
+    {
+      "elapsed_s": 55.034,
+      "batches": 733,
+      "speed": 0.020014146477380104,
+      "simulator_cpu_fraction": 0.7560403651243607,
+      "request_ms": 6.752000015694648,
+      "wait_ms": 5.120200017699972,
+      "frame_ms": 0.1002000062726438,
+      "transport_ms": 1.2400000123307109
+    },
+    {
+      "elapsed_s": 60.003,
+      "batches": 848,
+      "speed": 0.023304483985152495,
+      "simulator_cpu_fraction": 0.8741479686041155,
+      "request_ms": 5.659000016748905,
+      "wait_ms": 5.065499994088896,
+      "frame_ms": 0.04369999805931002,
+      "transport_ms": 0.5147499759914353
+    }
+  ]
+}

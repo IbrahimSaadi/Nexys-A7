@@ -1,0 +1,40 @@
+{
+  "transport": "direct",
+  "project": "counter",
+  "interval_ns": 136560,
+  "connections": 0,
+  "qos": "high",
+  "qos_applied": true,
+  "windows": [
+    {
+      "elapsed_s": 5.019,
+      "batches": 152,
+      "speed": 0.004135849301411885,
+      "simulator_cpu_fraction": 0.9869085196335399,
+      "request_ms": 32.68319998460356,
+      "wait_ms": 32.59529999922961,
+      "frame_ms": 0.05075000808574259,
+      "transport_ms": 0.004749992513097823
+    },
+    {
+      "elapsed_s": 10.028,
+      "batches": 152,
+      "speed": 0.0041437692978625925,
+      "simulator_cpu_fraction": 0.9763214608943457,
+      "request_ms": 32.77944998990279,
+      "wait_ms": 32.670900007360615,
+      "frame_ms": 0.05129999772179872,
+      "transport_ms": 0.004700021236203611
+    },
+    {
+      "elapsed_s": 15.003,
+      "batches": 151,
+      "speed": 0.0041448012729260455,
+      "simulator_cpu_fraction": 0.9861725988670245,
+      "request_ms": 32.807699986733496,
+      "wait_ms": 32.71259999019094,
+      "frame_ms": 0.041099992813542485,
+      "transport_ms": 0.003999972250312567
+    }
+  ]
+}

@@ -4,6 +4,12 @@ A VHDL workbench with a photographic Nexys A7 board, general project/port discov
 
 ## Windows portable edition
 
+**App window:** run `Start-Nexys-Lab-App.cmd` for an independent window without browser tabs. This launcher uses installed Microsoft Edge in app mode with an isolated Nexys Lab profile; it is not a separately bundled native WebView application. Python and GHDL stay in local processes. Closing the app window shuts down its backend and simulation sessions. Port 8765 is reserved for this launcher so saved projects keep the same origin between launches; a second instance reports that the port is occupied.
+
+Before moving an existing browser project into the app, use **Export project**, then **Import files** in the app to import that JSON. The app profile is separate from ordinary browser storage. The original browser and Compatible launchers remain available.
+
+**Background simulation (perf3):** a running Board session transfers its advance loop to the Python server when the page becomes hidden, once any queued minimum button holds have completed. The server continues the same GHDL process with the current inputs and configured clocks. Returning to the page waits for the current batch, retrieves the bounded history and returns control to the UI. Paused sessions stay paused. This also works in ordinary browser mode after restarting the updated server. One unattended background run is capped at one hour; normal session cleanup then applies if the client never returns. Downloaded live traces still contain samples, not all internal transitions.
+
 Download **Nexys-Lab-Windows-x64.zip** from [GitHub Releases](https://github.com/IbrahimSaadi/Nexys-A7/releases/latest), extract the entire archive to a writable folder and double-click **Start-Nexys-Lab.cmd**. Python and GHDL are bundled. No installation, PATH edits, administrator privileges or Internet connection are needed for the GHDL workflow. Windows10/11 x64 (Intel/AMD) is the supported portable target.
 
 The launcher opens a fresh browser tab and chooses a free port if an old server is running. Keep its console window open; Ctrl+C stops it. The header shows the version. Code → Download ZIP is the source edition, without the runtimes. Browser-local projects belong to the current address/port: export your edits before changing ports/versions, then import the JSON.
@@ -21,6 +27,16 @@ The uploaded counter design with `crt` and `ena_sw` can use top `main` directly:
 Imports add files to the current project; New project avoids accidentally mixing old and new designs with duplicate entity names. Export project saves all project files and simulation settings as JSON. Source edits persist in browser localStorage, not server example files; they are not automatically committed to Git.
 
 ## Editor and diagnostics
+
+### Waveforms and paused debugging
+
+Pause a running Board session, then use **Step time** to advance by 1–10,000,000 integer nanoseconds, or select a clock and press **One cycle** to advance by its period. All configured clocks continue during that interval. Cycle stepping supports integer-nanosecond periods; fractional periods remain supported by continuous simulation. The controls wait for any in-flight advance before enabling a step. Changes to switches or raw Signals inputs apply on the next advance. Board button presses retain their existing 30 ms minimum hold in simulated time.
+
+**Waveforms** provides Fit, zoom, pan, signal selection/search, and binary, hexadecimal, unsigned or signed values (including wide buses). Select cursor A or B and click a waveform to inspect the value at that time and measure the time difference. Internal signals recorded by Testbench VCD are selectable alongside ports and clocks. Not every VHDL type is representable in VCD. The preview retains up to 20,000 events; download the original Testbench VCD for the complete recording.
+
+Live Board traces contain sampled top-level outputs, not internal events. Their timestamps include the 200 ns startup; the board's HDL elapsed-time counter excludes it. Earlier values removed by the bounded history are shown as unknown until the next retained event. Zooming cannot recover transitions between live samples. Drag the separator above the results panel upward for more waveform space.
+
+Problems includes nearby source lines and rule-based suggested checks for common syntax, declaration, type, size, library, binding and runtime errors. Suggestions are advisory and do not modify source. Unrecognized diagnostics retain the compiler message without an invented fix. Compiler checks run when you press Run, not while typing.
 
 VHDL sources are colored locally as you type: keywords, types, comments, numbers, strings and operators. The editor retains native text selection, copy/paste, tab insertion and scrolling. Non-VHDL files are shown as plain text; highlighting does not validate a design.
 
@@ -65,13 +81,25 @@ Board instructions use physical control names (BTNU, BTNC, SW0, LED0) and inspec
 
 ## Performance measurements and batching
 
+The local **0.4.8-perf2** update prefers the validated bundled LLVM native backend. User designs compile with `-O2`; the unchanged VHDL-2008 `std_logic_1164` and `numeric_std` package bodies were rebuilt with `-O3`. Bounds checks, assertions, nine-state logic and all HDL clock events remain enabled. No timing constants are overridden. The native simulator is launched directly, so interactive Windows scheduling applies to the process executing the design.
+
+This increases compilation/startup time (roughly 1–2 seconds for the measured examples) in exchange for faster sustained simulation. In the local comparison, execution was about 1.8–1.9 times faster for two vector counters and 1.2 times faster for the elevator. All 533 observed states/timestamps matched the original engine. These results depend on the project and computer; they do not imply real-time simulation. See [measurements and validation](docs/performance-llvm.md).
+
+`Start-Nexys-Lab.cmd` selects LLVM when its validated runtime is present. `Start-Nexys-Lab-Compatible.cmd` uses the original mcode engine. Both use the same project format. Export your project before switching server ports. For direct Python launches, `NEXYS_LAB_GHDL_BACKEND=auto|mcode|llvm` controls selection; an explicit `GHDL_PATH` takes precedence. The original runtime remains installed. Full backend details are printed in the simulation Terminal.
+
 Signals → **LIVE BATCHING** defaults to Auto. It begins with a small probe and adjusts each observation batch toward roughly 20 ms of simulator waiting, bounded by **MAX SAMPLE INTERVAL** (10 ns–10 ms). Fixed mode retains a constant observation interval. Button release boundaries can shorten a batch in either mode. These controls never change the HDL clock period, source constants or scheduled events. Larger observation intervals can miss brief signal changes; Testbench VCD remains the option for complete waveform analysis.
 
 The live performance readout separates simulator waiting (including process communication), Python frame construction, approximate HTTP/JSON overhead and JavaScript UI update time. It also displays lag behind active wall time; pauses are excluded. These are elapsed-time measurements, not CPU profiling or hard real-time guarantees.
 
+The speed readout separates **recent** throughput (approximately the last five active seconds) from the **session average**. Performance details also show time between requests, including browser scheduling and client work. A similar batch size and simulator wait time do not by themselves prove that total throughput is steady. Completed batches proceed directly to the next asynchronous request when HDL time is behind wall time; explicit pacing still applies when ahead. Pausing continues to exclude paused time from the speed calculation.
+
 The browser receives new samples instead of the entire repeated history, retaining the latest 4,000 events locally for sampled waveforms/export. Board rendering is limited to about 30 updates per second, and hidden signal/waveform panels update when opened. Simulation requests continue independently and wait if HDL time gets ahead of active wall time. A slow design still runs slower than hardware; batching cannot remove its event-processing cost.
 
-For a reproducible local comparison, run `python scripts/benchmark_live.py --history` and `python scripts/benchmark_live.py`. Both execute the same 600,000 clock edges; the response sizes show transfer savings. The benchmark does not claim a universal execution-speed improvement.
+The local server reuses HTTP/1.1 connections and disables TCP buffering delays for small replies. Successful live-advance requests are not printed to the console; failures and session start/stop requests still are. The server keeps its sampled history in a bounded queue without copying all 4,000 entries on every incremental response.
+
+On supported Windows versions, each live GHDL process requests interactive HighQoS to avoid automatic background execution-speed throttling. This does not change the system power plan, CPU affinity, process priority class, clocks or VHDL source. Windows still controls thermal and power limits. This may use more battery than background throttling; set `NEXYS_LAB_SYSTEM_QOS=1` before launching to retain Windows-managed QoS. Unsupported systems retain their defaults. See [Microsoft's process QoS documentation](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessinformation).
+
+For a fixed-batch comparison, run `runtime/python/python.exe scripts/benchmark_transport.py --seconds 35 --qos high`. Add `--transport direct` to exclude HTTP, or `--project elevator` to use the included elevator. The default counter has a 100 MHz clock; the interval stays fixed at 136,560 ns. Every five seconds the script reports throughput, median simulator wait, frame construction and transport time. Compilation and browser rendering are excluded. Use `--qos default` for Windows-managed scheduling or `--qos switch` to switch the same process to HighQoS after 15 seconds. These measurements do not guarantee real-time simulation or isolate thermal/load effects.
 
 ## Testbench engines
 
@@ -116,3 +144,7 @@ python3 scripts/build_windows.py
 ```
 
 The builder verifies pinned official GHDL and CPython downloads, includes license notices and GHDL source, and writes the Windows ZIP plus SHA256 under dist/. Binary runtimes do not enter Git. GitHub Actions runs all unit/integration tests using the bundled Windows executables and both real browser regressions before publishing a v* release. Vivado is installed separately and never redistributed in the ZIP.
+
+### Building the portable release
+
+The default `python scripts/build_windows.py` bundles the original mcode runtime. To include an already validated native LLVM installation, use `--llvm-runtime path/to/ghdl-llvm` (containing `READY` and `ucrt64`). Runtime binaries and downloaded archives are excluded from Git. The source upload does not replace existing GitHub Release ZIP files.

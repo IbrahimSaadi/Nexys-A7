@@ -12,10 +12,11 @@ import socket
 import subprocess
 import tempfile
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+from ghdl_backend import Backend
 
 ROOT = Path(__file__).resolve().parent
 MAX_FILES = 40
-APP_VERSION = '0.4.8'
+APP_VERSION = '0.4.8-perf3'
 
 
 def find_ghdl():
@@ -28,6 +29,15 @@ def find_ghdl():
         if candidate.is_file():
             return str(candidate.resolve())
         raise ValueError('GHDL_PATH does not point to GHDL: ' + configured + '. Set it to the full path of ghdl.exe (Windows) or ghdl, then restart the server.')
+    preference = os.environ.get('NEXYS_LAB_GHDL_BACKEND', 'auto').lower()
+    if preference not in ('auto', 'mcode', 'llvm'):
+        raise ValueError('NEXYS_LAB_GHDL_BACKEND must be auto, mcode or llvm')
+    optimized = ROOT / 'runtime' / 'ghdl-llvm'
+    native = optimized / 'ucrt64' / 'bin' / 'ghdl.exe'
+    if preference != 'mcode' and os.name == 'nt' and (optimized/'READY').is_file() and native.is_file():
+        return str(native)
+    if preference == 'llvm':
+        raise ValueError('The validated LLVM runtime is not installed. Use auto or mcode.')
     bundled = ROOT / 'runtime' / 'ghdl' / 'bin' / ('ghdl.exe' if os.name == 'nt' else 'ghdl')
     if bundled.is_file():
         return str(bundled)
@@ -46,7 +56,9 @@ def simulator_status():
         result = subprocess.run([executable, '--version'], text=True, encoding='utf-8',errors='replace', stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=5)
         if result.returncode:
             raise ValueError('GHDL was found but could not start. Check the matching Windows architecture and extract the complete release, including DLLs.\n' + result.stdout)
-        return {'ok': True, 'simulator': 'GHDL', 'language': 'VHDL-2008', 'version': result.stdout.splitlines()[0]}
+        lines = result.stdout.splitlines()
+        return {'ok': True, 'simulator': 'GHDL', 'language': 'VHDL-2008', 'version': lines[0],
+                'backend': lines[2].strip() if len(lines) > 2 else 'GHDL'}
     except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
         return {'ok': False, 'simulator': 'GHDL', 'error': str(exc)}
 
@@ -266,14 +278,15 @@ def parse_vcd(text):
                 continue
             name = signals.get(key, '')
             values[name] = val
-            if name and not re.search(r'\.(?:io_)?(?:clk|clk100mhz)$', name, re.I):
+            if name:
                 event_count += 1
                 events.append([now, name, val])
-    return {'values': values, 'events': list(events), 'timescale': 'fs', 'end': now, 'truncated': event_count > 20000}
+    return {'values': values, 'events': list(events), 'timescale': 'fs', 'end': now, 'truncated': event_count > 20000, 'capture':'vcd'}
 
 
 def simulate(data):
     executable = find_ghdl()
+    backend = Backend(executable)
     files = data.get('files', {})
     if not isinstance(files, dict) or not 1 <= len(files) <= MAX_FILES:
         raise ValueError('Supply 1–40 files')
@@ -287,14 +300,15 @@ def simulate(data):
     fast = bool(data.get('fast', True))
     logs = []
     def run(args, cwd):
+        command = backend.compile_command(args) if args[0] in ('-a', '-e') else [executable, *args]
         try:
-            p = subprocess.run([executable, *args], cwd=cwd, text=True,encoding='utf-8',errors='replace', stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=25)
+            p = subprocess.run(command, cwd=cwd, env=backend.environment, text=True,encoding='utf-8',errors='replace', stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=25)
         except OSError as exc:
             raise ValueError('Could not launch GHDL. Verify GHDL_PATH or PATH, extract the complete GHDL installation (including DLLs), and restart the server. Details: ' + str(exc)) from exc
         except subprocess.TimeoutExpired as exc:
             logs.append((exc.stdout or b'').decode(errors='replace') if isinstance(exc.stdout, bytes) else (exc.stdout or ''))
             raise ValueError('Simulation exceeded 25 seconds. Shorten the duration or use accelerated board mode.\n' + '\n'.join(logs))
-        logs.append('$ ghdl ' + ' '.join(args) + '\n' + p.stdout)
+        logs.append('$ ghdl ' + ' '.join(command[1:]) + '\n' + p.stdout)
         return p.returncode
     with tempfile.TemporaryDirectory(prefix='nexys-') as tmp:
         wd = Path(tmp)
@@ -364,15 +378,30 @@ def simulate(data):
 
 
 class Handler(SimpleHTTPRequestHandler):
+    # Reuse the local connection for the continuous stream of live requests.
+    # Small JSON replies must not wait for TCP's delayed-ACK/Nagle interaction.
+    protocol_version = 'HTTP/1.1'
+    disable_nagle_algorithm = True
+    timeout = 30
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT/'web'), **kwargs)
 
+    def log_request(self, code='-', size='-'):
+        # Printing every observation can block on a Windows console. Keep
+        # startup, stop and failed requests visible without flooding it.
+        if self.path == '/api/live/advance' and code == 200:
+            return
+        super().log_request(code, size)
+
     def end_headers(self):
         self.send_header('Cache-Control', 'no-store')
+        if self.close_connection:
+            self.send_header('Connection', 'close')
         super().end_headers()
 
     def reply(self, data, status=200):
-        raw = json.dumps(data).encode()
+        raw = json.dumps(data, separators=(',', ':')).encode()
         self.send_response(status)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(raw)))
@@ -396,9 +425,20 @@ class Handler(SimpleHTTPRequestHandler):
         # Local-only API: reject cross-origin browser requests and huge projects.
         origin = self.headers.get('Origin')
         if origin and origin.split('://')[-1] != self.headers.get('Host'):
+            self.close_connection = True  # The rejected request body is unread.
             return self.reply({'error': 'Cross-origin requests denied'}, 403)
-        length = int(self.headers.get('Content-Length', '0'))
+        if self.headers.get('Transfer-Encoding'):
+            self.close_connection = True
+            return self.reply({'error': 'Transfer-Encoding is not supported'}, 400)
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            if length < 0:
+                raise ValueError
+        except ValueError:
+            self.close_connection = True
+            return self.reply({'error': 'Invalid Content-Length'}, 400)
         if length > 2_000_000:
+            self.close_connection = True
             return self.reply({'error': 'Project exceeds 2 MB'}, 413)
         try:
             data = json.loads(self.rfile.read(length))
@@ -410,7 +450,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.reply({'ghdl':simulator_status(),'vivado':vivado.status(data.get('vivado_path'))})
             if self.path == '/api/inspect':
                 return self.reply(inspect_project(data))
-            if self.path in ('/api/live/start', '/api/live/advance', '/api/live/stop'):
+            if self.path in ('/api/live/start', '/api/live/advance', '/api/live/stop', '/api/live/background', '/api/live/foreground'):
                 import live
                 return self.reply(live.api(self.path.rsplit('/', 1)[-1], data))
             if self.path == '/api/run':

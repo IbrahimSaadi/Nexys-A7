@@ -40,6 +40,12 @@ function parse(log,failed=false){
   // GHDL analysis and runtime: file:line:column[:@time]:(report/assertion severity): message.
   let m=/^(.+?\.vhdl?):(\d+):(\d+):(?:@[^:]+:)?\s*(?:\((report|assertion)\s+(note|warning|error|failure)\):\s*|(warning|error|note|fatal):\s*)?(.*)$/i.exec(text);
   if(m){add(m[5]||m[6]||'error',(m[4]==='assertion'?'Assertion: ':'')+m[7],m[1],m[2],m[3]);continue;}
+  // Some compiler versions omit the column.
+  m=/^(?!(?:ERROR|CRITICAL WARNING|WARNING|INFO|Note|Failure|Fatal):)(.+?\.vhdl?):(\d+):\s*(?:(warning|error|note|fatal):\s*)?(.*)$/i.exec(text);
+  if(m){add(m[3]||'error',m[4],m[1],m[2]);continue;}
+  // Native GHDL can put the runtime location on the following stack line.
+  m=/^from:\s+.*?\bat\s+(.+?\.vhdl?):(\d+)(?::(\d+))?\s*$/i.exec(text);
+  if(m&&items.length){const item=items.at(-1);if(!item.file){item.file=m[1];item.line=Number(m[2]);item.column=m[3]?Number(m[3]):null;}continue;}
   // Vivado compiler: ERROR: [VRFC 10-...] message [C:/path/file.vhd:line[:column]].
   m=/^(ERROR|CRITICAL WARNING|WARNING|INFO|Note|Failure|Fatal):\s*(?:\[([^\]]+)\]\s*)?(.*)$/i.exec(text);
   if(m){
@@ -59,7 +65,38 @@ function parse(log,failed=false){
  if(failed&&!items.some(i=>i.severity==='error'))add('error',String(log||'Simulation failed. See Terminal for details.').trim());
  const seen=new Set();return items.filter(i=>{const key=JSON.stringify(i);if(seen.has(key))return false;seen.add(key);return true;});
 }
-function mount({editor,paint,gutter,filename,panel,badge,onNavigate}){
+// Advice is explanatory, never a source rewrite or a claim of semantic correctness.
+function advice(item){
+ const message=item.message;
+ if(item.severity==='note')return null;
+ const rules=[
+  [/semicolon|';'.*expected|missing.*;/i,'Check the end of this statement and the preceding line. Add a semicolon only where a declaration or statement ends; do not add one after then or loop.'],
+  [/no declaration|not declared|undeclared|unknown identifier|cannot find declaration/i,'Check spelling and scope. Declare the signal, variable or constant before use. If it belongs to a package, check its library and use clauses. VHDL identifiers are case-insensitive.'],
+  [/bound check|out of (?:bounds|range)|index.*(?:range|bound)/i,'Check the reported index, vector bounds and generic values. Use signal\'length, signal\'range or signal\'high where appropriate. A runtime bound failure may occur on an assignment as well as an index.'],
+  [/division by zero|divide by zero/i,'Check the divisor at the failing simulation time. Guard the operation against zero or correct the value that produces it.'],
+  [/width|length|size mismatch/i,'Compare the lengths and ranges on both sides. For signed or unsigned arithmetic, consider resize(value, target\'length); choose truncation and sign behavior deliberately.'],
+  [/synopsys package/i,'Consider IEEE numeric_std with signed or unsigned arithmetic. Legacy Synopsys packages require compiler support and may conflict with numeric_std; do not mix arithmetic packages blindly.'],
+  [/cannot find (?:resource )?library|unit .*not found in library|package .*not (?:found|analysed|analyzed)|cannot find.*package/i,'Import the missing package source and check its library name. Compile dependencies before the units that use them; verify library IEEE; and the required use clause for IEEE types.'],
+  [/not bound|binding|port.*(?:association|map|connect)|formal|actual|cannot find entity|not analysed|not analyzed/i,'Check the selected top entity, entity/component names, port names, directions and types, and generic values. Ensure the entity source is included and compiled successfully.'],
+  [/multiple drivers/i,'Find all processes and concurrent assignments driving this signal. Use one owner where appropriate; resolved std_logic can combine drivers but conflicting values may produce X.'],
+  [/assertion|severity\s*(?:failure|error)/i,'Read the assertion condition and its report, then inspect the stimulus and signal values at the reported time. An assertion failure may reveal a design bug or an incorrect test expectation.'],
+  [/type|overload|cannot match|can't match|cannot convert|can't resolve/i,'Compare the operand and destination types. With numeric_std, use unsigned(vector) or signed(vector) for arithmetic and std_logic_vector(result) for conversion back. Use to_unsigned or to_signed for integers with an explicit width.'],
+  [/expected|unexpected|syntax|parse error/i,'Inspect this token and the preceding statement. Check punctuation and matching end if, end case, end loop and end process. Fix the earliest syntax error first; later messages may be consequences.'],
+  [/overflow/i,'Check the arithmetic range and destination type. Widen the operands before the operation when needed; widening only the result may be too late.'],
+  [/DLL|could not launch|cannot.*(?:launch|start)|GHDL_PATH/i,'Check the simulator installation and its dependencies. With the portable edition, try Start-Nexys-Lab-Compatible.cmd and keep the complete runtime folder together.']
+ ];
+ const match=rules.find(([pattern])=>pattern.test(message));
+ return match?match[1]:null;
+}
+function sourceContext(item,files){
+ const leaf=name=>String(name||'').replace(/\\/g,'/').split('/').at(-1).toLowerCase();
+ const entry=Object.entries(files||{}).find(([name])=>leaf(name)===leaf(item.file));
+ if(!entry||!item.line)return null;
+ const lines=entry[1].split(/\r?\n/),index=item.line-1;
+ if(index<0||index>=lines.length)return null;
+ return lines.slice(Math.max(0,index-1),index+2).map((text,n)=>`${Math.max(0,index-1)+n+1} | ${text}`).join('\n');
+}
+function mount({editor,paint,gutter,filename,panel,badge,onNavigate,getFiles=()=>({})}){
  let items=[],cached='',cachedLanguage=null,hasRun=false;
  const summary=document.createElement('p');summary.id='problem-summary';summary.setAttribute('role','status');
  const toolbar=document.createElement('div');toolbar.className='problem-filters';
@@ -92,6 +129,10 @@ function mount({editor,paint,gutter,filename,panel,badge,onNavigate}){
    const meta=document.createElement('strong');meta.textContent=item.severity.toUpperCase()+' · '+item.category+(item.code?' · '+item.code:'');
    const message=document.createElement('div');message.textContent=item.message;
    row.append(meta,message);
+   const context=sourceContext(item,getFiles());
+   if(context){const preview=document.createElement('pre');preview.className='problem-source';preview.textContent=context;row.append(preview);}
+   const suggestion=advice(item);
+   if(suggestion){const help=document.createElement('p');help.className='problem-advice';help.textContent='Suggested checks: '+suggestion;row.append(help);}
    if(item.file){const jump=document.createElement('button');jump.className='problem-location';jump.textContent=item.file+(item.line?':'+item.line:'')+(item.column?':'+item.column:'');jump.onclick=()=>onNavigate(item);row.append(jump);}
    list.append(row);
   }
@@ -101,5 +142,5 @@ function mount({editor,paint,gutter,filename,panel,badge,onNavigate}){
  editor.addEventListener('scroll',sync);render();
  return {refresh,sync,clear(){items=[];hasRun=false;render();},setLog(log,failed=false){items=parse(log,failed);hasRun=true;render();return items;}};
 }
-const api={highlight,parse,category,mount};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.NexysEditor=api;
+const api={highlight,parse,category,advice,sourceContext,mount};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.NexysEditor=api;
 })(typeof window!=='undefined'?window:globalThis);

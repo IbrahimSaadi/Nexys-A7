@@ -1,0 +1,36 @@
+/* Workspace layout; board overlays keep their relative physical coordinates. */
+html,body{height:100%;overflow:hidden}
+.workspace{height:calc(100dvh - 72px);grid-template-columns:200px minmax(320px,1fr) 400px;min-height:0}
+aside,.right{min-height:0;overflow:auto;scrollbar-width:thin;scrollbar-color:#4b5662 transparent}
+main{overflow:hidden}
+.editor-bar,.editor-status{flex-shrink:0}
+.editor-wrap{min-height:100px}
+.output{height:var(--results-height,32%);min-height:100px;flex-shrink:0;border-top:0}
+.output-content{min-height:0}
+.output-tabs{min-height:40px;gap:12px}
+.output-tabs button{padding:11px 0}
+#output-resizer{height:8px;flex:0 0 8px;cursor:row-resize;touch-action:none;background:#171e26;position:relative;border-block:1px solid var(--edge)}
+#output-resizer:after{content:'';position:absolute;width:38px;height:2px;background:#65717d;left:calc(50% - 19px);top:2px;border-radius:2px}
+#output-resizer:hover,#output-resizer:focus-visible{background:#34452b;outline:0}
+body.resizing,body.resizing *{cursor:row-resize!important;user-select:none!important}
+.right{padding:18px 20px}
+.hardware-heading{display:flex;align-items:center;gap:12px;margin:16px 0}
+.right .hardware-heading h1{font-size:18px;letter-spacing:-.4px;margin:0;flex:1}
+#board-size{font-size:10px;padding:6px 8px;white-space:nowrap;background:transparent}
+.settings{gap:8px;margin-bottom:10px;display:grid;grid-template-columns:1fr 1fr}
+.settings label{min-width:0}
+.settings input,.settings select{margin-top:5px;padding:8px}
+.input-status{min-height:0;margin:10px 0}
+.physical-board{width:100%;margin-inline:auto;transition:max-width .15s ease;max-width:100%}
+.physical-board:not(.photo-board) .tiny{display:none}
+.physical-board:not(.photo-board) .switch:focus-visible{outline:2px solid #e5ffaf;outline-offset:2px}
+.right.compact-board .physical-board{max-width:290px}
+.photo-status{font-size:9px}
+.board-actions{position:sticky;bottom:0;background:var(--surface);padding:10px 0;margin-top:8px;z-index:2}
+.clock-panel{margin-top:12px;gap:12px;padding:12px}
+.hint{margin-top:12px}
+@media(min-width:1600px){.workspace{grid-template-columns:210px minmax(390px,1fr) 420px}}
+@media(min-width:851px) and (max-height:650px){.output{min-height:80px}.editor-wrap{min-height:60px}.editor-bar{height:38px}.right{padding:12px 16px}}
+@media(max-width:1100px){.workspace{grid-template-columns:165px minmax(300px,1fr) 330px}.right{padding:16px 12px}.hardware-heading{flex-wrap:wrap}}
+@media(max-width:850px){html,body{height:auto;overflow:auto}.workspace{height:auto;grid-template-columns:145px minmax(0,1fr)}aside{overflow:visible}main{height:78dvh;min-height:440px}.right{grid-column:1/-1;max-width:600px;overflow:visible;width:100%;padding:20px}.settings{grid-template-columns:1fr 1fr}.physical-board{max-width:380px}}
+@media(max-width:480px){.workspace{grid-template-columns:110px minmax(0,1fr)}aside{padding:14px 5px}.side-actions{margin:16px 0}.side-actions button{padding:8px 3px;font-size:10px}.editor-bar{padding:0 8px;gap:6px}#saved{display:none}header{gap:5px}header button{padding:8px 6px}.brand b{font-size:11px}.brand-icon{display:none}.output-tabs{padding-inline:8px}}

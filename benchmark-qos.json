@@ -1,0 +1,80 @@
+{
+  "transport": "direct",
+  "project": "counter",
+  "interval_ns": 136560,
+  "connections": 0,
+  "qos": "switch",
+  "qos_applied": true,
+  "windows": [
+    {
+      "elapsed_s": 5.039,
+      "batches": 115,
+      "speed": 0.003116875136785867,
+      "simulator_cpu_fraction": 0.9830539315027953,
+      "request_ms": 42.73119999561459,
+      "wait_ms": 42.65380001743324,
+      "frame_ms": 0.05189998773857951,
+      "transport_ms": 0.005399982910603285
+    },
+    {
+      "elapsed_s": 10.048,
+      "batches": 115,
+      "speed": 0.003134923770243494,
+      "simulator_cpu_fraction": 0.9981036430056207,
+      "request_ms": 43.21810000692494,
+      "wait_ms": 43.12749998643994,
+      "frame_ms": 0.04959999932907522,
+      "transport_ms": 0.005199981387704611
+    },
+    {
+      "elapsed_s": 15.095,
+      "batches": 115,
+      "speed": 0.0031116756790706946,
+      "simulator_cpu_fraction": 0.9999896966970984,
+      "request_ms": 43.63060000468977,
+      "wait_ms": 43.548099987674505,
+      "frame_ms": 0.04689997876994312,
+      "transport_ms": 0.0051000097300857306
+    },
+    {
+      "elapsed_s": 20.11,
+      "batches": 116,
+      "speed": 0.003158813356791531,
+      "simulator_cpu_fraction": 0.9939239998874934,
+      "request_ms": 43.23915000713896,
+      "wait_ms": 43.15754999697674,
+      "frame_ms": 0.050700007705017924,
+      "transport_ms": 0.0053000112529844046
+    },
+    {
+      "elapsed_s": 25.111,
+      "batches": 115,
+      "speed": 0.0031398712221867918,
+      "simulator_cpu_fraction": 0.9934308305468926,
+      "request_ms": 43.12640000716783,
+      "wait_ms": 43.01870000199415,
+      "frame_ms": 0.05420000525191426,
+      "transport_ms": 0.005600013537332416
+    },
+    {
+      "elapsed_s": 30.153,
+      "batches": 116,
+      "speed": 0.0031418480439963123,
+      "simulator_cpu_fraction": 0.9916848612698701,
+      "request_ms": 42.886549999821,
+      "wait_ms": 42.79955000674818,
+      "frame_ms": 0.05160000000614673,
+      "transport_ms": 0.005549998604692519
+    },
+    {
+      "elapsed_s": 35.038,
+      "batches": 113,
+      "speed": 0.003159190849106154,
+      "simulator_cpu_fraction": 0.9884447899552499,
+      "request_ms": 43.37820000364445,
+      "wait_ms": 43.290300003718585,
+      "frame_ms": 0.04939999780617654,
+      "transport_ms": 0.005199981387704611
+    }
+  ]
+}

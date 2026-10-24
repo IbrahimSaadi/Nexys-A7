@@ -1,7 +1,9 @@
 """Persistent VHDL simulation with explicitly selected hardware or preview timing."""
 import atexit
+from collections import deque
 from decimal import Decimal
 from pathlib import Path
+import os
 import queue
 import re
 import subprocess
@@ -9,6 +11,8 @@ import tempfile
 import threading
 import time
 import uuid
+from windows_performance import interactive_qos
+from ghdl_backend import Backend
 
 
 def clock_config(ps, mapping, configured=None):
@@ -276,13 +280,20 @@ class Session:
     def __init__(self, data):
         import server
         self.lock = threading.Lock()
+        self.runner_lock = threading.Lock()
+        self.background_stop_event = threading.Event()
+        self.background_thread = None
+        self.background_owned = False
+        self.background_error = None
+        self.latest = None
         self.temp = tempfile.TemporaryDirectory(prefix='nexys-live-')
         self.process = None
         self.logs = []
         self.frames = queue.Queue()
         self.touched = time.monotonic()
         self.elapsed = 0
-        self.history = []
+        self.history = deque(maxlen=4000)
+        self.history_truncated = False
         self.closed = False
         self.timing = data.get('timing', 'original')
         if self.timing not in ('original', 'interactive'):
@@ -329,10 +340,13 @@ class Session:
             self.set_inputs(data.get('inputs', {}))
             self.input_values = self.resolve_inputs(0, [])
             executable = server.find_ghdl()
+            backend = Backend(executable)
+            self.backend = backend
             pending = [name for name in files if name.lower().endswith(('.vhd', '.vhdl'))]
             def compile(args):
-                r = subprocess.run([executable, *args], cwd=self.temp.name, text=True,encoding='utf-8',errors='replace', stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=25)
-                return r.returncode, '$ ghdl ' + ' '.join(args) + '\n' + r.stdout
+                command = backend.compile_command(args)
+                r = subprocess.run(command, cwd=self.temp.name, env=backend.environment, text=True,encoding='utf-8',errors='replace', stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=25)
+                return r.returncode, '$ ghdl ' + ' '.join(command[1:]) + '\n' + r.stdout
             while pending:
                 remaining, errors = [], []
                 for name in pending:
@@ -352,11 +366,17 @@ class Session:
                 self.logs.append(log)
                 if status:
                     raise ValueError(log)
-            self.process = subprocess.Popen([executable, '-r', '--std=08', 'lab_live_tb', '--assert-level=error'],
-                cwd=self.temp.name, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            self.logs.append(backend.version.strip())
+            self.process = subprocess.Popen(backend.live_command(self.temp.name, 'lab_live_tb'),
+                cwd=self.temp.name, env=backend.environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True,encoding='utf-8',errors='replace', bufsize=1)
+            # The simulator serves interactive browser controls even when its
+            # console is hidden. Keep Windows from treating it as background work.
+            if os.environ.get('NEXYS_LAB_SYSTEM_QOS') != '1' and interactive_qos(self.process.pid):
+                self.logs.append('Windows interactive simulator scheduling enabled.')
             threading.Thread(target=self.reader, daemon=True).start()
             self.initial = self.frame()
+            self.latest = self.initial
         except Exception:
             self.close()
             raise
@@ -391,9 +411,8 @@ class Session:
             name = 'lab_board_tb.io_' + p['name'].lower()
             values[name] = value
             events.append([stamp, name, value])
+        self.history_truncated |= len(self.history) + len(events) > self.history.maxlen
         self.history.extend(events)
-        truncated = len(self.history) > 4000
-        self.history = self.history[-4000:]
         digits = parts[3+len(self.outputs):3+len(self.outputs)+8]
         sim_ns = (stamp-200000000)/1000000
         clock_note = ', '.join(f"{name}={options['period_ns']} ns ({1000/options['period_ns']:g} MHz)" for name, options in self.clocks.items()) or 'none configured'
@@ -407,8 +426,9 @@ class Session:
                 'input_values': self.input_values.copy(), 'port_inputs': self.input_values.copy(),
                 'manual_inputs': self.raw_inputs.copy(), 'clocks': self.clocks,
                 'board_bindings': self.board_bindings, 'board_values': self.board_values(values),
-                'wave': {'values':values, 'events': self.history[:] if include_history else events,
-                         'end':stamp, 'truncated':truncated, 'mode':'history' if include_history else 'delta'},
+                'wave': {'values':values, 'events': list(self.history) if include_history else events,
+                         'end':stamp, 'truncated':self.history_truncated, 'mode':'history' if include_history else 'delta',
+                         'capture':'sampled', 'timescale':'fs'},
                 'log': heading + '\n' + '\n'.join(self.logs)}
         result['performance'] = {'simulator_wait_ms': (received-waiting)*1000,
                                  'frame_build_ms': (time.perf_counter()-received)*1000}
@@ -456,19 +476,29 @@ class Session:
     def resolve_inputs(self, switches, buttons):
         return {p['name']: self.raw_inputs.get(p['name'], mapped_value(p, self.mapping[p['name']], switches, buttons)) for p in self.drive_ports}
 
-    def advance(self, data):
+    def advance(self, data, _background=False):
         with self.lock:
             started = time.perf_counter()
             if self.closed:
                 raise ValueError('Session closed. Press Run to start again.')
+            if self.background_owned and not _background:
+                raise ValueError('Return the session to foreground before advancing manually')
             self.touched = time.monotonic()
             switches = int(data.get('sw', 0))
             buttons = data.get('buttons', [])
             duration = int(data.get('ns', 1000000))
             include_history = data.get('wave_history', True)
+            debug_step = data.get('debug_step', False)
+            if not isinstance(debug_step, bool):
+                raise ValueError('debug_step must be a boolean')
+            if debug_step and (isinstance(data.get('ns'), bool) or not isinstance(data.get('ns'), int)):
+                raise ValueError('Step duration must be an integer number of nanoseconds')
             if not isinstance(include_history, bool):
                 raise ValueError('wave_history must be a boolean')
-            if not 0 <= switches <= 65535 or not 10 <= duration <= 10000000 or duration % 10:
+            valid_duration = 1 <= duration <= 10000000 if debug_step else 10 <= duration <= 10000000 and duration % 10 == 0
+            if not 0 <= switches <= 65535 or not valid_duration:
+                if debug_step:
+                    raise ValueError('Invalid inputs or step duration (1–10,000,000 integer ns)')
                 raise ValueError('Invalid inputs or time interval (10 ns–10 ms, multiple of 10 ns)')
             if not isinstance(buttons, list) or any(b not in ('btnC','btnU','btnL','btnR','btnD') for b in buttons):
                 raise ValueError('buttons must be a list of board button names')
@@ -481,9 +511,70 @@ class Session:
             result = self.frame(include_history)
             result['performance'].update({'backend_ms': (time.perf_counter()-started)*1000,
                                           'interval_ns': duration})
+            self.latest = result
             return result
 
+    def run_background(self, data):
+        """Transfer the existing session to one server-side driver, without restarting HDL."""
+        with self.runner_lock:
+            with self.lock:
+                if self.closed:
+                    raise ValueError('Session closed')
+                if self.background_owned:
+                    return {'ok': True, 'background': True}
+                maximum = data.get('maximum_ns', 1000000)
+                if type(maximum) is not int or not 10 <= maximum <= 10000000 or maximum % 10:
+                    raise ValueError('Invalid background sample interval')
+                switches = data.get('sw', 0)
+                if type(switches) is not int or not 0 <= switches <= 65535:
+                    raise ValueError('Invalid switches')
+                self.set_inputs(data.get('inputs', {}))
+                self.background_owned = True
+                self.background_error = None
+                self.background_stop_event.clear()
+                baseline = self.latest['sim_ns']
+            def drive():
+                started = time.monotonic()
+                quantum, cost = min(10000, maximum), None
+                try:
+                    # Bound unattended work if the client disappears without sending stop.
+                    while not self.background_stop_event.is_set() and not self.closed:
+                        if time.monotonic() - started > 3600:
+                            break
+                        duration = quantum if data.get('automatic', True) else maximum
+                        frame = self.advance({'ns': duration, 'sw': switches, 'buttons': [],
+                                              'wave_history': False}, _background=True)
+                        measured = max(frame['performance']['simulator_wait_ms'], 0.001) / duration
+                        cost = measured if cost is None else 0.7 * cost + 0.3 * measured
+                        quantum = max(10, min(maximum, int(max(duration / 4, min(duration * 2, 20 / cost)) / 10) * 10))
+                        wait = max(0, (frame['sim_ns'] - baseline) / 1e9 - (time.monotonic() - started))
+                        if wait:
+                            self.background_stop_event.wait(wait)
+                except Exception as exc:
+                    self.background_error = str(exc)
+            self.background_thread = threading.Thread(target=drive, daemon=True)
+            self.background_thread.start()
+            return {'ok': True, 'background': True}
+
+    def return_foreground(self):
+        with self.runner_lock:
+            self.background_stop_event.set()
+            if self.background_thread:
+                self.background_thread.join(timeout=35)
+                if self.background_thread.is_alive():
+                    raise ValueError('Background simulator did not stop its current advance')
+            with self.lock:
+                self.background_owned = False
+                self.touched = time.monotonic()
+                if self.background_error:
+                    raise ValueError(self.background_error)
+                if self.closed:
+                    raise ValueError('Session closed')
+                return {**self.latest, 'wave': {**self.latest['wave'], 'events': list(self.history),
+                        'mode': 'history', 'truncated': self.history_truncated}}
+
     def close(self):
+        self.background_stop_event.set()
         self.closed = True
         if self.process:
             if self.process.poll() is None:
@@ -524,6 +615,10 @@ def api(action, data):
         return {'ok': True}
     if not session:
         raise ValueError('Session expired. Press Run again.')
+    if action == 'background':
+        return session.run_background(data)
+    if action == 'foreground':
+        return session.return_foreground()
     return session.advance(data)
 
 
@@ -540,7 +635,9 @@ def cleanup():
 
 def close_all():
     for session in list(sessions.values()):
-        session.close()
+        session.background_stop_event.set()
+        with session.lock:
+            session.close()
 
 
 atexit.register(close_all)

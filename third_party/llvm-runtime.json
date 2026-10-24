@@ -1,0 +1,106 @@
+{
+  "packages": [
+    {
+      "archive": "runtime\\downloads\\ghdl-llvm-6.0.0.tar.zst",
+      "url": "https://github.com/ghdl/ghdl/releases/download/v6.0.0/mingw-w64-ucrt-x86_64-ghdl-llvm-6.0.0-1-any.pkg.tar.zst",
+      "sha256": "e5549cb7e5a6e00a3b48f25f776b248407f2f4702a051487281aa7226393ccd2",
+      "bytes": 29567538
+    },
+    {
+      "archive": "runtime\\downloads\\gcc-15.2.0-13.tar.zst",
+      "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-gcc-15.2.0-13-any.pkg.tar.zst",
+      "sha256": "cb9fae770fb5f214714ea81a869a779097192fc961032541a6a3300b6aa50eec",
+      "bytes": 48913135
+    },
+    {
+      "archive": "runtime\\downloads\\gcc-ada-15.2.0-13.tar.zst",
+      "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-gcc-ada-15.2.0-13-any.pkg.tar.zst",
+      "sha256": "db62a4f507a5fbf2eb1189cc17817d9e38b9876f49275890409c30664fbe008f",
+      "bytes": 24729614
+    },
+    {
+      "archive": "runtime\\downloads\\gcc-libs-15.2.0-13.tar.zst",
+      "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-gcc-libs-15.2.0-13-any.pkg.tar.zst",
+      "sha256": "2529e62407a945761e00749d3f5ea601e68b926f82fc2dad7ba968cebd65d1d7",
+      "bytes": 1074648
+    },
+    {
+      "archive": "runtime\\downloads\\binutils-2.46-2.tar.zst",
+      "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-binutils-2.46-2-any.pkg.tar.zst",
+      "sha256": "e86d1164dd23956242c83fce33ae08cd20058011ab89c38269f0597c020f9d25",
+      "bytes": 6568113
+    },
+    {
+      "archive": "runtime\\downloads\\crt-13.tar.zst",
+      "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-crt-13.0.0.r560.g3197fc7d6-1-any.pkg.tar.zst",
+      "sha256": "80ccd12d63b4d2e5db207ba4dc1c6d68824945c018ddfdaa557eb66a490b0167",
+      "bytes": 4866179
+    },
+    {
+      "archive": "runtime\\downloads\\winpthreads-13.tar.zst",
+      "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-winpthreads-13.0.0.r560.g3197fc7d6-1-any.pkg.tar.zst",
+      "sha256": "c66e4198ad82ba9b14c1e91759709f87fbd14d4bc361e5d6cf2683785f726bfb",
+      "bytes": 43697
+    },
+    {
+      "archive": "runtime\\downloads\\zlib-1.3.2-2.tar.zst",
+      "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-zlib-1.3.2-2-any.pkg.tar.zst",
+      "sha256": "841401182976d2f9e17e5c0ebaac51f2a8014140ea53d67625e91c8fb3c85ea0",
+      "bytes": 111475
+    },
+    {
+      "archive": "runtime\\downloads\\zstd-1.5.7-2.tar.zst",
+      "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-zstd-1.5.7-2-any.pkg.tar.zst",
+      "sha256": "dbdb8427280046a2b41697780aa4c52983b708082b0da4755951dc3bea96ca89",
+      "bytes": 668277
+    },
+    {
+      "archive": "runtime\\downloads\\gettext-runtime-1.0-1.tar.zst",
+      "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-gettext-runtime-1.0-1-any.pkg.tar.zst",
+      "sha256": "ba693dda4ac375af76ce481ff3a6e7481286546cc7dc6d56c7021dae34084157",
+      "bytes": 417977
+    },
+    {
+      "archive": "runtime\\downloads\\libiconv-1.18-1.tar.zst",
+      "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-libiconv-1.18-1-any.pkg.tar.zst",
+      "sha256": "6b875c9ea05969cd4d802c1fc68edd158c269447e8dbf1baee02dec28603e74c",
+      "bytes": 742765
+    },
+    {
+      "archive": "runtime\\downloads\\windows-default-manifest-6.4-4.tar.zst",
+      "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-windows-default-manifest-6.4-4-any.pkg.tar.zst",
+      "sha256": "6d1c9e2ab75aace04d30fb43974b24d5505bfd7872ca23fea773fc9ae70bd248",
+      "bytes": 3059
+    }
+  ],
+  "optimized_ieee": [
+    {
+      "source": "runtime\\ghdl-llvm\\ucrt64\\lib\\ghdl\\src\\ieee2008\\std_logic_1164-body.vhdl",
+      "source_sha256": "733a52f5ee50bff9f1bc8631928089041239a93a7a9e6692bcb07d5c46c5d9be",
+      "object_sha256": "3676031a9d0e0f8a8854b67d2169a0bd43a953aa23e195c6dac5a0c06d86aa4f",
+      "optimization": "-O3"
+    },
+    {
+      "source": "runtime\\ghdl-llvm\\ucrt64\\lib\\ghdl\\src\\ieee2008\\numeric_std-body.vhdl",
+      "source_sha256": "0f1d3c4d8a3653742d24879ded21464c571095480cd944765f11734690371d80",
+      "object_sha256": "12398410ed4d50ce0ded0f85f876ca1d64d6c92edd0056538ba4767a78435343",
+      "optimization": "-O3"
+    }
+  ],
+  "project_optimization": "-O2",
+  "copied_from_original_bundle": [
+    {
+      "file": "runtime\\ghdl\\bin\\libgcc_s_seh-1.dll",
+      "sha256": "c658c94c8d59c50e77a4b3b790d595daedc5422e87170dd2609bed3e733a4000"
+    },
+    {
+      "file": "runtime\\ghdl\\bin\\libwinpthread-1.dll",
+      "sha256": "2b3136c1d085fdb84e0b55c7a7e004672f35d576e4eff7fb2bef0b5899a781b7"
+    },
+    {
+      "file": "runtime\\ghdl\\bin\\zlib1.dll",
+      "sha256": "11cd91171765cd65f1c3362e3df67e5f5a618a6b88c8cdec899b802eaf1c7b0d"
+    }
+  ],
+  "note": "GHDL archive checked against GitHub release digest. MSYS2 package hashes recorded after HTTPS download."
+}

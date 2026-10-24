@@ -1,4 +1,5 @@
 .editor-surface{position:relative;flex:1;min-width:0;overflow:hidden}
+.problem-source{white-space:pre;overflow:auto;max-height:130px;padding:8px;background:#10171f;color:#d3dcea;font:11px/1.6 var(--mono)}.problem-advice{line-height:1.65;color:#bdd9ae;margin:8px 0;overflow-wrap:anywhere}
 #editor,#syntax-highlight{font:12px/1.85 var(--mono);font-variant-ligatures:none;letter-spacing:normal;tab-size:4;padding:20px 16px 20px 4px;white-space:pre;overflow-wrap:normal;word-break:normal;text-align:left}
 #editor{position:absolute;inset:0;height:100%;width:100%;margin:0;color:transparent;caret-color:#f5f7fb;-webkit-text-fill-color:transparent;z-index:1;overflow:auto}
 #editor::selection{background:#607b9366}

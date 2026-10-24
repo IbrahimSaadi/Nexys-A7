@@ -28,7 +28,7 @@ async function main(){
   assert.ok(requests.length>afterPause);assert.ok(requests.slice(afterPause).every(r=>r.ns===1000));
   let previous=initial;
   for(const frame of frames){const cycles=parseInt(frame.wave.values['lab_board_tb.io_q'],2)-parseInt(previous.wave.values['lab_board_tb.io_q'],2);assert.equal(cycles*10,frame.sim_ns-previous.sim_ns,'Every 100 MHz edge must execute despite adaptive batching');previous=frame;}
-  await page.click('[data-tab="waves"]');assert.ok(await page.locator('.wave-row').count()>0);
+  await page.click('[data-tab="waves"]');assert.ok(await page.locator('.debug-wave-row').count()>0);
   await page.click('#run');await page.reload();await page.waitForFunction(()=>document.getElementById('top').value==='timing_probe');
   assert.equal(await page.locator('#batch-mode').inputValue(),'fixed');assert.equal(await page.locator('#frame-quantum').inputValue(),'1000');
   assert.deepEqual(errors,[]);console.log('PASS: real adaptive intervals, incremental transfer, measured timings, exact 100 MHz counter edges, pause/resume, fixed mode and persisted settings.');

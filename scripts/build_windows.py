@@ -67,19 +67,25 @@ def extract(archive, dest, prefix=''):
                 shutil.copyfileobj(src, out)
 
 
-def build(cache, output):
+def build(cache, output, llvm_runtime=None):
     fetch(cache)
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='nexys-package-') as temp:
         stage = Path(temp)/'Nexys-Lab'
         stage.mkdir()
-        for name in ('server.py', 'live.py', 'board.py', 'vivado.py', 'README.md', 'Start-Nexys-Lab.cmd'):
+        for name in ('server.py', 'live.py', 'board.py', 'vivado.py', 'ghdl_backend.py',
+                     'windows_performance.py', 'desktop.py', 'README.md', 'Start-Nexys-Lab.cmd',
+                     'Start-Nexys-Lab-App.cmd', 'Start-Nexys-Lab-Compatible.cmd'):
             shutil.copy2(ROOT/name, stage/name)
         for path in ROOT.glob('test_*.py'):
             shutil.copy2(path,stage/path.name)
         for name in ('web', 'examples', 'third_party', 'docs'):
             shutil.copytree(ROOT/name, stage/name)
         extract(cache/'ghdl.zip', stage/'runtime/ghdl')
+        if llvm_runtime is not None:
+            if not (llvm_runtime/'READY').is_file() or not (llvm_runtime/'ucrt64/bin/ghdl.exe').is_file():
+                raise ValueError('Supply a validated LLVM runtime directory containing READY and ucrt64/bin/ghdl.exe')
+            shutil.copytree(llvm_runtime, stage/'runtime/ghdl-llvm')
         extract(cache/'python.nupkg', stage/'runtime/python', prefix='tools/')
         shutil.copy2(cache/'ghdl-source.tar.gz', stage/'third_party/ghdl-6.0.0-source.tar.gz')
         (stage/'third_party/downloads.json').write_text(json.dumps(ASSETS, indent=2))
@@ -87,6 +93,7 @@ def build(cache, output):
             'NEXYS LAB - WINDOWS x64 PORTABLE\n\n'
             '1. Extract the entire ZIP to a regular writable folder. Do not run inside the ZIP.\n'
             '2. Double-click Start-Nexys-Lab.cmd. Your browser opens automatically.\n'
+            '   Or use Start-Nexys-Lab-App.cmd for a separate Edge app window.\n'
             '3. Keep the console window open. Press Ctrl+C there to stop.\n\n'
             'Python 3.13.7 and GHDL 6.0.0 are included. No installation, admin access,\n'
             'PATH changes, or Internet connection are needed to run this package.\n'
@@ -109,5 +116,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--cache', type=Path, default=ROOT/'.local/downloads')
     parser.add_argument('--output', type=Path, default=ROOT/'dist')
+    parser.add_argument('--llvm-runtime', type=Path, help='Optional validated native LLVM runtime to bundle alongside mcode')
     args = parser.parse_args()
-    build(args.cache.resolve(), args.output.resolve())
+    build(args.cache.resolve(), args.output.resolve(), args.llvm_runtime.resolve() if args.llvm_runtime else None)

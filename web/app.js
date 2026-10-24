@@ -2,13 +2,15 @@
 const $ = id => document.getElementById(id);
 let files = {}, current = '', commands = [], mapping = {}, sw = 0, busy = false, last = null;
 const storageKey = 'nexys-lab-project-v1';
+const waveViewer = NexysWaves.mount($('waves'));
+let pendingAdvances = 0;
 let projectInfo = null, rawInputs = {}, userClocks = {}, mappingOverrides = {}, pinCatalog = null, catalogView = null;
 function xdcControls(name){return(projectInfo?.bindings.mapping[name]||[]).some(b=>b.source==='xdc')||(projectInfo?.bindings.warnings||[]).some(w=>w.toLowerCase().includes(name.toLowerCase())&&/conflict|unknown pin|unresolved/i.test(w));}
 const inspector = NexysSignals.mount($('signal-inspector'), {
   onInput(name,bits) { rawInputs[name]=bits;save(); },
   onClock(name,config) {userClocks[name]=config;if(config)delete rawInputs[name];stopLive();$('input-status').textContent='Clock configuration changed. Press Run to apply.';save();}
 });
-const editorTools = NexysEditor.mount({editor:$('editor'),paint:$('syntax-highlight'),gutter:$('lines'),filename:()=>current,panel:$('problems'),badge:$('problems-tab'),onNavigate:goToProblem});
+const editorTools = NexysEditor.mount({editor:$('editor'),paint:$('syntax-highlight'),gutter:$('lines'),filename:()=>current,panel:$('problems'),badge:$('problems-tab'),onNavigate:goToProblem,getFiles:()=>files});
 function showLog(log,failed=false) { $('console').textContent=log; const items=editorTools.setLog(log,failed);if(failed)document.querySelector('[data-tab="problems"]').click();return items; }
 function goToProblem(problem) {
   const leaf=String(problem.file).replace(/\\/g,'/').split('/').at(-1).toLowerCase();
@@ -74,24 +76,15 @@ function setBoardPhoto(source) {
   $('photo-status').textContent = source ? 'Digilent board photograph · controls and display use live VHDL outputs.' : 'Vector view. Choose Board photo to restore the manufacturer photograph.';
 }
 $('choose-photo').onclick = () => { localStorage.removeItem(photoKey);setBoardPhoto('nexys-a7-photo.jpg'); };
-$('upload-photo').onclick = () => $('photo-upload').click();
 $('default-art').onclick = () => { localStorage.setItem(photoKey,'vector'); setBoardPhoto(null); };
-$('photo-upload').onchange = async event => {
-  const file=event.target.files[0]; if(!file) return;
-  try {
-    if(!['image/png','image/jpeg','image/webp'].includes(file.type) || file.size>3000000) throw Error('Choose a PNG, JPG or WebP image smaller than 3 MB.');
-    const source=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(Error('Could not read photo'));reader.readAsDataURL(file);});
-    const photo=new Image(); photo.src=source; await photo.decode();
-    if(Math.abs(photo.width/photo.height-600/550)>.03) throw Error('Use the front-facing reference photo at 600 × 550 (or the same proportions), without a desk or extra margins.');
-    setBoardPhoto(source);
-    try {localStorage.setItem(photoKey,source);}catch{toast('Photo loaded for this session. Browser storage is full.');}
-  }catch(error){toast(error.message);}
-  event.target.value='';
-};
+
 let liveToken = null, paused = false, liveGeneration = 0, simNs = 0, wallStart = 0, liveTimer = null;
 let pausedAt = 0, pausedWall = 0, lastPaint = -Infinity;
 const pacing = new NexysPacing.Controller();
+const throughput = new NexysPacing.Throughput();
 const holds = new Map();
+let backgroundWake = null;
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)backgroundWake?.();});
 const activeWallMs = () => (paused ? pausedAt : performance.now()) - wallStart - pausedWall;
 function updateProjectGuidance() {
   const board = $('mode').value === 'board';
@@ -123,12 +116,77 @@ function newProject() {
   openFile('');modeChanged(false);
 }
 async function liveRequest(action, body) {
-  const response = await fetch('/api/live/' + action, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
-  const data = await response.json(); if (!response.ok || data.error) throw Error(data.error || response.statusText); return data;
+  if(action==='advance'){pendingAdvances++;updateStepControls();}
+  try {
+    const response = await fetch('/api/live/' + action, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const data = await response.json(); if (!response.ok || data.error) throw Error(data.error || response.statusText); return data;
+  } finally {if(action==='advance'){pendingAdvances--;updateStepControls();}}
 }
+async function backgroundAdvance(generation){
+  const token=liveToken;
+  pendingAdvances++;updateStepControls();
+  try {
+    await liveRequest('background',{session:token,sw,inputs:physicalInputs([]),maximum_ns:Number($('frame-quantum').value),automatic:$('batch-mode').value==='auto'});
+    if(generation!==liveGeneration)return;
+    if(document.hidden&&!paused)await new Promise(resolve=>{backgroundWake=resolve;});
+    backgroundWake=null;
+    if(generation!==liveGeneration)return;
+    const frame=await liveRequest('foreground',{session:token});
+    if(generation!==liveGeneration)return;
+    last=frame;simNs=frame.sim_ns;throughput.reset();pacing.reset();
+    renderBoard(frame);renderWaves(frame.wave);inspector.update(frame);catalogView?.update?.(frame);
+    $('sim-time').textContent=(simNs/1e9).toFixed(6)+' s';
+    $('wall-time').textContent=(activeWallMs()/1000).toFixed(2)+' s';
+    $('performance-details').textContent='Returned from server background execution. Collecting recent speed?';
+  }finally{backgroundWake=null;pendingAdvances--;updateStepControls();}
+}
+function updateStepControls(){
+  const ready=Boolean(liveToken)&&paused&&pendingAdvances===0;
+  const disable=(id,value)=>{if($(id).disabled!==value)$(id).disabled=value;};
+  disable('step-time',!ready);
+  const period=Number($('step-clock').value);
+  disable('step-cycle',!ready||!Number.isInteger(period)||period<1||period>10000000);
+  disable('pause',!liveToken||pendingAdvances>0&&paused);
+  const status=!liveToken?'Start a board session, then pause to step.':pendingAdvances&&paused?'Waiting for the current advance to finish.':!paused?'Pause to step through the design.':'Paused. Step time advances integer nanoseconds; One cycle advances one selected clock period. All clocks continue normally.';
+  if($('step-status').textContent!==status)$('step-status').textContent=status;
+}
+function configureStepClocks(clocks){
+  $('step-clock').replaceChildren();
+  for(const [name,config] of Object.entries(clocks||{})){
+    const option=document.createElement('option');option.value=config.period_ns;
+    option.textContent=name+' ('+config.period_ns+' ns)';
+    option.disabled=!Number.isInteger(config.period_ns)||config.period_ns<1||config.period_ns>10000000;
+    if(option.disabled)option.textContent+=' - fractional/unsupported step';
+    $('step-clock').append(option);
+  }
+  const first=[...$('step-clock').options].find(o=>!o.disabled);if(first)first.selected=true;
+  updateStepControls();
+}
+async function stepSimulation(cycle=false){
+  if(!liveToken||!paused||pendingAdvances)return;
+  const duration=Number($(cycle?'step-clock':'step-ns').value);
+  if(!Number.isInteger(duration)||duration<1||duration>10000000)return toast('Choose an integer duration from 1 to 10,000,000 ns.');
+  const generation=liveGeneration;
+  const presses=[...holds].filter(([,press])=>press.remainingNs>0),buttons=presses.map(([name])=>name);
+  try {
+    const frame=await liveRequest('advance',{session:liveToken,ns:duration,debug_step:true,wave_history:false,sw,buttons:buttons.filter(b=>b!=='cpu_resetn'),inputs:physicalInputs(buttons)});
+    if(generation!==liveGeneration)return;
+    frame.wave=NexysPacing.mergeWave(last?.wave,frame.wave);last=frame;simNs=frame.sim_ns;
+    for(const [name,press] of presses)if(holds.get(name)===press){press.remainingNs-=duration;if(press.remainingNs<=0)holds.delete(name);}
+    renderBoard(frame);renderWaves(frame.wave);inspector.update(frame);catalogView?.update?.(frame);
+    document.querySelectorAll('[data-button]').forEach(b=>b.classList.toggle('pressed',holds.has(b.dataset.button)));
+    $('sim-time').textContent=simNs+' ns';$('result').textContent='Paused - advanced '+duration+' ns';
+  }catch(error){if(generation===liveGeneration){stopLive();showLog(error.message,true);$('result').textContent='Step failed';}}
+  finally{updateStepControls();}
+}
+$('step-time').onclick=()=>stepSimulation(false);
+$('step-cycle').onclick=()=>stepSimulation(true);
+$('step-clock').onchange=updateStepControls;
+
 function stopLive() {
-  ++liveGeneration; clearTimeout(liveTimer); const token = liveToken; liveToken = null; holds.clear();
+  ++liveGeneration; clearTimeout(liveTimer); const token = liveToken; liveToken = null; holds.clear(); backgroundWake?.();
   if (token) liveRequest('stop', {session:token}).catch(()=>{});
+  updateStepControls();
   document.querySelectorAll('[data-button]').forEach(b=>b.classList.remove('pressed'));
   $('run').innerHTML = '▶ Run simulation <kbd>Ctrl ↵</kbd>';
 }
@@ -141,14 +199,15 @@ async function startLive() {
     const info=await inspectProject();
     const data = await liveRequest('start', {files, top:$('top').value, mapping, timing:'original', generics:genericValues(),clocks:{...info.clocks,...userClocks},inputs:physicalInputs([]),board_bindings:info.bindings.mapping});
     if (generation !== liveGeneration) { await liveRequest('stop',{session:data.session}); return; }
-    liveToken = data.session; mapping = data.mapping; simNs = 0; paused = false; holds.clear(); wallStart = performance.now(); pausedWall = 0;lastPaint=-Infinity;pacing.reset();last=data;
+    liveToken = data.session; mapping = data.mapping; simNs = 0; paused = false; holds.clear(); wallStart = performance.now(); pausedWall = 0;lastPaint=-Infinity;pacing.reset();throughput.reset();last=data;
     $('input-status').textContent = 'Running · '+$('top').value+'. Drive inputs using the mapped board controls or Signals.';
     $('pause').textContent = 'Ⅱ Pause'; $('run').textContent = '■ Stop simulation'; showLog(data.log);
-    renderBoard(data); renderMapping(data); save();
+    renderBoard(data); renderMapping(data); renderWaves(null); renderWaves(data.wave); configureStepClocks(data.clocks); save();
     const pump = async () => {
       if (!liveToken || generation !== liveGeneration) return;
       if (paused) { liveTimer = setTimeout(pump, 100); return; }
       try {
+        if(document.hidden&&holds.size===0){await backgroundAdvance(generation);if(generation===liveGeneration)pump();return;}
         const begin = performance.now();
         const presses = [...holds].filter(([,press])=>press.remainingNs > 0);
         const buttons = presses.map(([name])=>name);
@@ -162,6 +221,7 @@ async function startLive() {
         for (const [name,press] of presses) if (holds.get(name) === press) { press.remainingNs-=quantum; if(press.remainingNs<=0) holds.delete(name); }
         if (buttons.length) $('input-status').textContent = buttons.map(controlLabel).join('; ')+' delivered to VHDL. Observe your design outputs.';
         const wall = activeWallMs()/1000, sim = simNs/1e9;
+        const recent=throughput.observe(quantum,wall*1000,requestMs);
         if(performance.now()-lastPaint>=1000/30){
           const uiStart=performance.now();
           renderBoard(frame);
@@ -169,16 +229,17 @@ async function startLive() {
           if(!$('signals').hidden)inspector.update(frame);
           if(!$('pins').hidden)catalogView?.update?.(frame);
           $('sim-time').textContent = sim.toFixed(6) + ' s'; $('wall-time').textContent = wall.toFixed(2)+' s';
-          $('sim-speed').textContent = (sim/Math.max(wall,0.001)).toFixed(4)+'× · 1 HDL s ≈ '+Math.round(wall/Math.max(sim,1e-9))+' wall s';
+          $('sim-speed').textContent = recent.speed.toFixed(4)+'× recent · '+(sim/Math.max(wall,0.001)).toFixed(4)+'× session average';
           const uiMs=performance.now()-uiStart,metrics=frame.performance||{};
-          $('performance-details').textContent='Batch: '+quantum.toLocaleString()+' ns · '+$('batch-mode').value+'\nSimulator wait: '+(metrics.simulator_wait_ms||0).toFixed(1)+' ms · Frame build: '+(metrics.frame_build_ms||0).toFixed(1)+' ms\nHTTP/JSON overhead ≈ '+Math.max(0,requestMs-(metrics.backend_ms||0)).toFixed(1)+' ms · UI update: '+uiMs.toFixed(1)+' ms\nBehind wall time: '+Math.max(0,wall-sim).toFixed(3)+' s';
+          $('performance-details').textContent='Batch: '+quantum.toLocaleString()+' ns · '+$('batch-mode').value+'\nSimulator wait: '+(metrics.simulator_wait_ms||0).toFixed(1)+' ms · Frame build: '+(metrics.frame_build_ms||0).toFixed(1)+' ms\nHTTP/JSON overhead ≈ '+Math.max(0,requestMs-(metrics.backend_ms||0)).toFixed(1)+' ms · UI update: '+uiMs.toFixed(1)+' ms\nBetween requests (recent avg): '+recent.betweenMs.toFixed(1)+' ms / '+(document.hidden?'background tab':'visible tab')+'\nBehind wall time: '+Math.max(0,wall-sim).toFixed(3)+' s';
           lastPaint=performance.now();
         }
         $('result').textContent = paused ? 'Paused' : '● Running · original timing'; $('result').style.color = '#b5ec69';
         document.querySelectorAll('[data-button]').forEach(b=>b.classList.toggle('pressed',holds.has(b.dataset.button)));
         // Never run ahead of wall time; slower simulation remains visibly slower.
         const wait = Math.max(0, sim*1000-activeWallMs());
-        liveTimer = setTimeout(pump,wait);
+        if(wait>0)liveTimer = setTimeout(pump,wait);
+        else pump(); // Fetch yields to the browser; no extra timer is needed between completed batches.
       } catch (error) { if (generation === liveGeneration) { stopLive(); showLog(error.message,true); $('result').textContent = 'Simulator stopped'; } }
     };
     pump();
@@ -251,11 +312,12 @@ $('mode').onchange = () => modeChanged(); $('top').onchange = () => { clearInspe
 for (const button of document.querySelectorAll('[data-tab]')) button.onclick = () => {
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('selected', b === button));
   for (const tab of ['console', 'problems', 'waves', 'mapping','signals','pins']) $(tab).hidden = tab !== button.dataset.tab;
-  if(last?.board){if(button.dataset.tab==='waves')renderWaves(last.wave);if(button.dataset.tab==='signals')inspector.update(last);if(button.dataset.tab==='pins')catalogView?.update?.(last);}
+  if(button.dataset.tab==='waves'&&last?.wave)renderWaves(last.wave);
+  if(last?.board){if(button.dataset.tab==='signals')inspector.update(last);if(button.dataset.tab==='pins')catalogView?.update?.(last);}
 };
 for (let i = 0; i < 16; i++) {
-  const led = document.createElement('div'); led.className = 'led-unit'; led.innerHTML = `<div id="led-${i}" class="led"></div><span class="tiny">${i}</span>`; $('leds').append(led);
-  const unit = document.createElement('div'); unit.className = 'led-unit'; const button = document.createElement('button'); button.className = 'switch'; button.setAttribute('aria-label', `Switch ${i}`); button.setAttribute('aria-pressed', 'false'); button.innerHTML = '<i></i>';
+  const led = document.createElement('div'); led.className = 'led-unit'; led.innerHTML = `<div id="led-${i}" class="led" title="LD${i}" aria-label="LD${i}"></div><span class="tiny">${i}</span>`; $('leds').append(led);
+  const unit = document.createElement('div'); unit.className = 'led-unit'; const button = document.createElement('button'); button.className = 'switch'; button.setAttribute('aria-label', `SW${i}`); button.title = `SW${i}`; button.setAttribute('aria-pressed', 'false'); button.innerHTML = '<i></i>';
   button.onclick = () => { sw ^= 1 << i;releasePhysicalOverride('sw['+i+']'); button.classList.toggle('on', !!(sw & (1 << i))); button.setAttribute('aria-pressed', String(!!(sw & (1 << i)))); $('switch-value').textContent = '0x' + sw.toString(16).padStart(4, '0').toUpperCase(); };
   const label = document.createElement('span'); label.className = 'tiny'; label.textContent = i; unit.append(button, label); $('switches').append(unit);
 }
@@ -273,7 +335,8 @@ function renderBoard(result) {
   for(let i=0;i<2;i++){const rgb=['r','g','b'].map(c=>board['rgb['+i+'].'+c]==='1'?255:0);$('rgb-'+i).style.background='rgb('+rgb.join(',')+')';$('rgb-'+i).style.boxShadow=rgb.some(Boolean)?'0 0 8px rgb('+rgb.join(',')+')':'none';}
   const nibble=group=>{let n=0;for(let i=0;i<4;i++)if(board[group+'['+i+']']==='1')n|=1<<i;return n.toString(16).toUpperCase();};
   $('vga-level').textContent=Object.keys(board).some(k=>k.startsWith('vga_'))?'VGA raw #'+nibble('vga_r')+nibble('vga_g')+nibble('vga_b')+' HS:'+board.vga_hs+' VS:'+board.vga_vs:'VGA: raw signals';
-  const history = result.wave?.events || []; const segPort = ports.find(p => result.mapping?.[p.name] === 'segment'); const anPort = ports.find(p => result.mapping?.[p.name] === 'an');
+  const authoritativeDigits = result.digits?.length===8 && result.digits.every(value=>integer(value)!==null);
+  const history = authoritativeDigits ? [] : (result.wave?.events || []); const segPort = ports.find(p => result.mapping?.[p.name] === 'segment'); const anPort = ports.find(p => result.mapping?.[p.name] === 'an');
   let seg = null, an = null; const digits = {};
   // Sample after all changes at a timestamp, avoiding delta-cycle display ghosts.
   for (let index = 0; index < history.length;) {
@@ -297,18 +360,8 @@ function renderMapping(result) {
     select.value = result.mapping[p.name];select.disabled=xdcControls(p.name);if(select.disabled)select.title='Physical XDC bindings take priority. Edit XDC or drive raw inputs in Signals.'; select.onchange = () => { mapping[p.name] = select.value;mappingOverrides[p.name]=select.value; resetHistory(); save(); }; row.append(label, select); $('mapping-fields').append(row);
   }
 }
-function renderWaves(wave) {
-  $('waves').replaceChildren(); const help = document.createElement('div'); help.className = 'wave-help'; help.textContent = `Time: 0–${((wave?.end || 0)/1e6).toFixed(0)} ns · last 20,000 non-clock transitions · download VCD for all signals${wave?.truncated ? ' · preview truncated' : ''}`; $('waves').append(help);
-  const signals = Object.keys(wave?.values || {}).filter(k => !k.includes('.dut.') && !k.endsWith('.clk') && !k.endsWith('.io_clk')).slice(0, 28);
-  for (const name of signals) {
-    const events = wave.events.filter(e => e[1] === name); if (!events.length) continue;
-    const row = document.createElement('div'); row.className = 'wave-row'; const label = document.createElement('span'); label.textContent = name.replace(/^lab_board_tb\./, ''); label.title = name;
-    const ns = 'http://www.w3.org/2000/svg'; const svg = document.createElementNS(ns, 'svg'); svg.setAttribute('viewBox', '0 0 600 36'); svg.setAttribute('preserveAspectRatio', 'none');
-    let d = ''; const end = Math.max(1, wave.end);
-    events.slice(0, 1000).forEach((event, i) => { const x = event[0]/end*600, next = (events[i+1]?.[0] ?? end)/end*600; const v = integer(event[2]), y = v === 0 ? 27 : 9; d += `${i ? 'L' : 'M'}${x},${y} L${next},${y} `; if (event[2].length > 1 && next-x > 35) { const t = document.createElementNS(ns,'text'); t.setAttribute('x',x+5); t.setAttribute('y','23'); t.setAttribute('fill','#c6e1a9'); t.setAttribute('font-size','10'); t.textContent = v === null ? event[2] : v; svg.append(t); } });
-    const path = document.createElementNS(ns, 'path'); path.setAttribute('d',d); path.setAttribute('stroke','#a7df6d'); path.setAttribute('fill','none'); path.setAttribute('stroke-width','1.3'); svg.prepend(path); row.append(label,svg); $('waves').append(row);
-  }
-}
+function renderWaves(wave) { waveViewer.update(wave); }
+
 async function run(extra = []) {
   if ($('mode').value === 'board') return startLive();
   if (busy) return; busy = true; editorTools.clear(); $('run').disabled = true; $('run').textContent = '◌ Simulating…'; $('result').textContent = ($('engine').value==='vivado'?'Vivado XSim':'GHDL')+' running';
@@ -319,13 +372,14 @@ async function run(extra = []) {
     showLog(result.log,!result.ok);
     $('result').textContent = result.ok ? '● Simulation passed' : '● ' + result.phase + ' failed'; $('result').style.color = result.ok ? '#b5ec69' : '#fa897f';
     last = result;
+    renderWaves(null);
     if (!result.ok) { commands = oldCommands; document.querySelector('[data-tab="problems"]').click(); }
     if (result.board) { mapping = result.mapping; renderBoard(result); renderMapping(result); }
     renderWaves(result.wave); save();
   } catch (error) { commands = oldCommands; showLog(error.message,true); $('result').textContent = 'Simulation error'; }
   finally { busy = false; $('run').disabled = false; $('run').innerHTML = '▶ Run simulation <kbd>Ctrl ↵</kbd>'; }
 }
-$('run').onclick = () => run(); $('pause').onclick = () => { if (!liveToken) return; if(!paused){pausedAt=performance.now();paused=true;}else{pausedWall+=performance.now()-pausedAt;paused=false;} $('pause').textContent = paused ? '▶ Resume' : 'Ⅱ Pause'; $('result').textContent = paused ? 'Paused' : 'Running'; }; $('reset').onclick = () => { resetHistory(); if ($('mode').value === 'board') run(); };
+$('run').onclick = () => run(); $('pause').onclick = () => { if (!liveToken || (paused && pendingAdvances)) return; if(!paused){pausedAt=performance.now();paused=true;backgroundWake?.();}else{pausedWall+=performance.now()-pausedAt;paused=false;} throughput.reset(); $('pause').textContent = paused ? '▶ Resume' : 'Ⅱ Pause'; $('result').textContent = paused ? 'Paused' : 'Running'; updateStepControls(); }; $('reset').onclick = () => { resetHistory(); if ($('mode').value === 'board') run(); };
 document.querySelectorAll('[data-button]').forEach(button => button.onclick = () => { if (!liveToken) return toast('Press Run to start the continuous clock first');releasePhysicalOverride(button.dataset.button); holds.set(button.dataset.button,{remainingNs:30000000}); button.classList.add('pressed'); $('input-status').textContent = controlLabel(button.dataset.button)+' queued for VHDL.'; });
 $('cpu-reset').onclick=()=>{if(!liveToken)return toast('Press Run first');releasePhysicalOverride('cpu_resetn');holds.set('cpu_resetn',{remainingNs:30000000});};
 window.addEventListener('pagehide',()=>{if(liveToken)fetch('/api/live/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session:liveToken}),keepalive:true}).catch(()=>{});});

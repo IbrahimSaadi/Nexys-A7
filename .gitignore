@@ -3,3 +3,9 @@ __pycache__/
 *.pyc
 runtime/
 dist/
+
+performance-backup*/
+*.log
+debug-tools-ui.png
+test-results-*.txt
+benchmark-browser-failure.json

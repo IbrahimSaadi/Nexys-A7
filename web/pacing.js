@@ -18,10 +18,22 @@ class Controller {
   this.next=Math.max(10,Math.min(10000000,Math.floor(Math.max(ns/4,Math.min(ns*2,20/this.cost))/10)*10));
  }
 }
+class Throughput {
+ constructor(){this.reset();}
+ reset(){this.samples=[];this.previous=null;}
+ observe(ns,activeMs,requestMs){
+  const elapsed=this.previous===null?requestMs:Math.max(0,activeMs-this.previous);
+  this.previous=activeMs;
+  this.samples.push({ns,elapsed,requestMs,time:activeMs});
+  while(this.samples.length>1&&this.samples[0].time<activeMs-5000)this.samples.shift();
+  const total=this.samples.reduce((sum,s)=>({ns:sum.ns+s.ns,ms:sum.ms+s.elapsed,gap:sum.gap+Math.max(0,s.elapsed-s.requestMs)}),{ns:0,ms:0,gap:0});
+  return {speed:total.ns/Math.max(total.ms,0.001)/1e6,betweenMs:total.gap/this.samples.length,windowMs:total.ms};
+ }
+}
 function mergeWave(previous,current){
  if(current.mode!=='delta')return current;
  const events=[...(previous?.events||[]),...current.events];
  return {...current,events:events.slice(-4000),truncated:!!previous?.truncated||current.truncated||events.length>4000};
 }
-const api={Controller,mergeWave};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.NexysPacing=api;
+const api={Controller,Throughput,mergeWave};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.NexysPacing=api;
 })(typeof window!=='undefined'?window:globalThis);

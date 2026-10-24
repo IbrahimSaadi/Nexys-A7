@@ -14,8 +14,9 @@ if not exist "runtime\ghdl\bin\ghdl.exe" (
   pause
   exit /b 1
 )
-rem The portable edition always uses the simulator shipped alongside it.
-set "GHDL_PATH=%~dp0runtime\ghdl\bin\ghdl.exe"
+rem Prefer the validated bundled LLVM runtime; retain mcode as a fallback.
+rem An explicit GHDL_PATH remains supported for custom installations.
+if /i "%~1"=="--mcode" set "GHDL_PATH=%~dp0runtime\ghdl\bin\ghdl.exe"
 echo Starting Nexys Lab. Keep this window open while using the application.
 echo Press Ctrl+C in this window to stop the server.
 "runtime\python\python.exe" server.py --open-browser --auto-port

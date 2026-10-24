@@ -1,0 +1,84 @@
+{
+  "transport": "http",
+  "project": "counter",
+  "interval_ns": 136560,
+  "engine": "GHDL 6.0.0 (6.0.0.r0.ge589c698c.dirty) [Dunoon edition]\n Compiled with GNAT Version: 15.2.0\n llvm 21.1.8 code generator\nWritten by Tristan Gingold.\n\nCopyright (C) 2003 - 2026 Tristan Gingold.\nGHDL is free software, covered by the GNU General Public License.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
+  "compiler_flags": [
+    "-O2"
+  ],
+  "connections": 1,
+  "qos": "high",
+  "qos_applied": true,
+  "windows": [
+    {
+      "elapsed_s": 5.021,
+      "batches": 203,
+      "speed": 0.00552158068254991,
+      "simulator_cpu_fraction": 0.9336522696118238,
+      "request_ms": 24.390799982938915,
+      "wait_ms": 23.305299982894212,
+      "frame_ms": 0.06009999196976423,
+      "transport_ms": 1.051200000802055
+    },
+    {
+      "elapsed_s": 10.022,
+      "batches": 200,
+      "speed": 0.005460674208509447,
+      "simulator_cpu_fraction": 0.912211704610587,
+      "request_ms": 24.6571000025142,
+      "wait_ms": 23.114950003218837,
+      "frame_ms": 0.07979999645613134,
+      "transport_ms": 1.1353499867254868
+    },
+    {
+      "elapsed_s": 15.03,
+      "batches": 201,
+      "speed": 0.005481144970422266,
+      "simulator_cpu_fraction": 0.9204363579743394,
+      "request_ms": 24.72330001182854,
+      "wait_ms": 23.118300014175475,
+      "frame_ms": 0.08080000407062471,
+      "transport_ms": 1.1544999724719673
+    },
+    {
+      "elapsed_s": 20.038,
+      "batches": 211,
+      "speed": 0.005753889305237035,
+      "simulator_cpu_fraction": 0.9360451985516359,
+      "request_ms": 24.974600004497916,
+      "wait_ms": 23.00660000764765,
+      "frame_ms": 0.08399999933317304,
+      "transport_ms": 1.2420999992173165
+    },
+    {
+      "elapsed_s": 25.041,
+      "batches": 202,
+      "speed": 0.005513693949399871,
+      "simulator_cpu_fraction": 0.9338110154986646,
+      "request_ms": 24.521550003555603,
+      "wait_ms": 23.199499992188066,
+      "frame_ms": 0.07414999708998948,
+      "transport_ms": 1.127650000853464
+    },
+    {
+      "elapsed_s": 30.046,
+      "batches": 199,
+      "speed": 0.005429536516108237,
+      "simulator_cpu_fraction": 0.9209333824562328,
+      "request_ms": 24.972000013804063,
+      "wait_ms": 23.44759998959489,
+      "frame_ms": 0.08709999383427203,
+      "transport_ms": 1.1913000198546797
+    },
+    {
+      "elapsed_s": 35.009,
+      "batches": 199,
+      "speed": 0.005475900764539872,
+      "simulator_cpu_fraction": 0.9287974761972934,
+      "request_ms": 24.713600025279447,
+      "wait_ms": 23.281399975530803,
+      "frame_ms": 0.08150000940077007,
+      "transport_ms": 1.1774000304285437
+    }
+  ]
+}
